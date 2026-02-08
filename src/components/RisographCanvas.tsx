@@ -2,7 +2,6 @@ import {
   useRef,
   useEffect,
   useState,
-  useCallback,
   useImperativeHandle,
   forwardRef,
 } from "react";
@@ -65,52 +64,56 @@ export const RisographCanvas = forwardRef<
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const render = useCallback(async () => {
+  useEffect(() => {
+    let cancelled = false;
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    setLoading(true);
-    setError(null);
+    loadImage(src)
+      .then((img) => {
+        if (cancelled) return;
 
-    try {
-      const img = await loadImage(src);
+        // 出力サイズの決定
+        let outW = width ?? img.naturalWidth;
+        let outH = height ?? img.naturalHeight;
 
-      // 出力サイズの決定
-      let outW = width ?? img.naturalWidth;
-      let outH = height ?? img.naturalHeight;
+        // 幅のみ指定時はアスペクト比を維持
+        if (width && !height) {
+          outH = Math.round(
+            (img.naturalHeight / img.naturalWidth) * width
+          );
+        }
+        // 高さのみ指定時もアスペクト比を維持
+        if (height && !width) {
+          outW = Math.round(
+            (img.naturalWidth / img.naturalHeight) * height
+          );
+        }
 
-      // 幅のみ指定時はアスペクト比を維持
-      if (width && !height) {
-        outH = Math.round(
-          (img.naturalHeight / img.naturalWidth) * width
+        const imageData = getImageData(img, outW, outH);
+
+        processRisograph(imageData, canvas, {
+          colors,
+          dotSize,
+          misregistration,
+          grain,
+        });
+
+        setLoading(false);
+        setError(null);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setError(
+          e instanceof Error ? e.message : "画像の読み込みに失敗しました"
         );
-      }
-      // 高さのみ指定時もアスペクト比を維持
-      if (height && !width) {
-        outW = Math.round(
-          (img.naturalWidth / img.naturalHeight) * height
-        );
-      }
-
-      const imageData = getImageData(img, outW, outH);
-
-      processRisograph(imageData, canvas, {
-        colors,
-        dotSize,
-        misregistration,
-        grain,
+        setLoading(false);
       });
 
-      setLoading(false);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "画像の読み込みに失敗しました");
-      setLoading(false);
-    }
+    return () => {
+      cancelled = true;
+    };
   }, [src, colors, width, height, dotSize, misregistration, grain]);
-
-  useEffect(() => {
-    render();
-  }, [render]);
 
   return (
     <div style={{ position: "relative", display: "inline-block" }}>

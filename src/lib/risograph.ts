@@ -5,7 +5,7 @@
  * ハーフトーン処理を施して合成する。
  */
 
-import { hexToRgb, luminance, type RGB } from "./color";
+import { hexToRgb, type RGB } from "./color";
 import { applyHalftone } from "./halftone";
 
 export interface RisographColor {
@@ -31,32 +31,106 @@ export interface RisographOptions {
 /** 色ごとのデフォルトスクリーン角度 */
 const DEFAULT_ANGLES = [15, 75, 0, 45, 30, 60, 90, 105];
 
+/** 紙の色 (RGB 0-255) */
+const PAPER: RGB = { r: 245, g: 240, b: 232 };
+
 /**
- * ソース画像データから各色チャンネルの濃度マップを生成する。
- * 各ピクセルの輝度を反転（暗い部分＝インクが濃い）して濃度とする。
+ * 非負最小二乗法 (NNLS) による色分解。
+ *
+ * 各ピクセルの色を「紙色からの差分（＝インクが吸収すべき量）」として捉え、
+ * 各インク色の吸収ベクトルの非負線形結合で近似する。
+ *
+ *   target ≈ Σ d_i × inkDelta_i   (d_i ≥ 0)
+ *
+ * 座標降下法で解くため色数が何色でも自動的に対応し、
+ * 各インクの色相に応じた濃度マップが生成される。
  */
-function extractDensityMap(
+function decomposeColors(
   imageData: ImageData,
-  _color: RGB,
-  _colorIndex: number,
-  _totalColors: number
-): Float32Array {
+  inkRgbs: RGB[]
+): Float32Array[] {
   const { data, width, height } = imageData;
-  const map = new Float32Array(width * height);
+  const n = inkRgbs.length;
+  const pixelCount = width * height;
 
-  for (let i = 0; i < width * height; i++) {
-    const offset = i * 4;
-    const r = data[offset];
-    const g = data[offset + 1];
-    const b = data[offset + 2];
-    const a = data[offset + 3] / 255;
+  // 各インクの「吸収ベクトル」: (paper - ink) / 255
+  const inkDeltas: [number, number, number][] = inkRgbs.map((ink) => [
+    (PAPER.r - ink.r) / 255,
+    (PAPER.g - ink.g) / 255,
+    (PAPER.b - ink.b) / 255,
+  ]);
 
-    // 輝度を反転して濃度に（暗い＝濃い）
-    const lum = luminance(r, g, b) / 255;
-    map[i] = (1 - lum) * a;
+  // 事前計算: 各インクペアのドット積
+  const dotInkInk = new Float64Array(n * n);
+  for (let i = 0; i < n; i++) {
+    for (let j = i; j < n; j++) {
+      const dot =
+        inkDeltas[i][0] * inkDeltas[j][0] +
+        inkDeltas[i][1] * inkDeltas[j][1] +
+        inkDeltas[i][2] * inkDeltas[j][2];
+      dotInkInk[i * n + j] = dot;
+      dotInkInk[j * n + i] = dot;
+    }
   }
 
-  return map;
+  // 出力: 各色の濃度マップ
+  const maps = inkRgbs.map(() => new Float32Array(pixelCount));
+
+  const MAX_ITER = 12;
+  const densities = new Float64Array(n);
+
+  for (let p = 0; p < pixelCount; p++) {
+    const off = p * 4;
+    const alpha = data[off + 3] / 255;
+    if (alpha < 0.01) {
+      for (let i = 0; i < n; i++) maps[i][p] = 0;
+      continue;
+    }
+
+    // target = (paper - pixel) / 255 × alpha
+    const tr = ((PAPER.r - data[off]) / 255) * alpha;
+    const tg = ((PAPER.g - data[off + 1]) / 255) * alpha;
+    const tb = ((PAPER.b - data[off + 2]) / 255) * alpha;
+
+    // 各インクと target のドット積
+    const dotInkTarget = new Float64Array(n);
+    for (let i = 0; i < n; i++) {
+      dotInkTarget[i] =
+        inkDeltas[i][0] * tr +
+        inkDeltas[i][1] * tg +
+        inkDeltas[i][2] * tb;
+    }
+
+    // 初期値: 単純射影
+    for (let i = 0; i < n; i++) {
+      const selfDot = dotInkInk[i * n + i];
+      densities[i] =
+        selfDot > 1e-10
+          ? Math.max(0, Math.min(1, dotInkTarget[i] / selfDot))
+          : 0;
+    }
+
+    // 座標降下法で反復改善
+    for (let iter = 0; iter < MAX_ITER; iter++) {
+      for (let i = 0; i < n; i++) {
+        let numerator = dotInkTarget[i];
+        for (let j = 0; j < n; j++) {
+          if (j !== i) numerator -= densities[j] * dotInkInk[i * n + j];
+        }
+        const selfDot = dotInkInk[i * n + i];
+        densities[i] =
+          selfDot > 1e-10
+            ? Math.max(0, Math.min(1, numerator / selfDot))
+            : 0;
+      }
+    }
+
+    for (let i = 0; i < n; i++) {
+      maps[i][p] = densities[i];
+    }
+  }
+
+  return maps;
 }
 
 /**
@@ -76,21 +150,24 @@ export function processRisograph(
 
   const ctx = canvas.getContext("2d")!;
 
-  // 背景を白（紙の色）で塗りつぶし
-  ctx.fillStyle = "#f5f0e8";
+  // 背景を紙の色で塗りつぶし
+  ctx.fillStyle = `rgb(${PAPER.r},${PAPER.g},${PAPER.b})`;
   ctx.fillRect(0, 0, width, height);
+
+  // インク RGB を取得
+  const inkRgbs = colors.map((c) => hexToRgb(c.color));
+
+  // NNLS 色分解: 全色の濃度マップを一括生成
+  const densityMaps = decomposeColors(sourceData, inkRgbs);
 
   // 各色レイヤーを処理
   for (let ci = 0; ci < colors.length; ci++) {
-    const colorDef = colors[ci];
-    const rgb = hexToRgb(colorDef.color);
-    const angle = colorDef.angle ?? DEFAULT_ANGLES[ci % DEFAULT_ANGLES.length];
-
-    // 濃度マップの抽出
-    const densityMap = extractDensityMap(sourceData, rgb, ci, colors.length);
+    const rgb = inkRgbs[ci];
+    const angle =
+      colors[ci].angle ?? DEFAULT_ANGLES[ci % DEFAULT_ANGLES.length];
 
     // ハーフトーンの適用
-    const halftoneMap = applyHalftone(densityMap, width, height, {
+    const halftoneMap = applyHalftone(densityMaps[ci], width, height, {
       dotSize,
       angle,
     });

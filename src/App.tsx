@@ -349,7 +349,7 @@ function App() {
           dotSize={dotSize}
           misregistration={misregistration}
           grain={grain}
-          className="rounded-md shadow-lg"
+          className="shadow-lg"
         />
       </div>
 
