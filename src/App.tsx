@@ -169,8 +169,8 @@ function App() {
       <Separator className="mb-6" />
 
       {/* Controls */}
-      <section className="mb-6 grid grid-cols-2 gap-x-8 gap-y-5 sm:grid-cols-4">
-        <div className="col-span-2 min-w-0 sm:col-span-1">
+      <section className="mb-6 grid grid-cols-1 gap-x-8 gap-y-5 sm:grid-cols-4">
+        <div className="min-w-0">
           <Label className="mb-2 text-xs uppercase tracking-wider text-muted-foreground">
             Preset
           </Label>
@@ -313,8 +313,8 @@ function App() {
         />
       </div>
 
-      <div className="mt-4 flex items-center justify-between">
-        <p className="text-[11px] text-muted-foreground/70">
+      <div className="mt-4 flex flex-col-reverse items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-center text-[11px] text-muted-foreground/70 sm:text-left">
           All processing runs locally in your browser. No images are uploaded or sent to any server.
         </p>
         <Button

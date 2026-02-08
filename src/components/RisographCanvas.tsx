@@ -116,12 +116,14 @@ export const RisographCanvas = forwardRef<
   }, [src, colors, width, height, dotSize, misregistration, grain]);
 
   return (
-    <div style={{ position: "relative", display: "inline-block" }}>
+    <div style={{ position: "relative", display: "inline-block", maxWidth: "100%" }}>
       <canvas
         ref={canvasRef}
         className={className}
         style={{
           display: "block",
+          maxWidth: "100%",
+          height: "auto",
           opacity: loading ? 0.3 : 1,
           transition: "opacity 0.3s",
           ...style,
