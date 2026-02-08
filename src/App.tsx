@@ -367,6 +367,19 @@ function App() {
           Download PNG
         </Button>
       </div>
+
+      <footer className="mt-10 flex items-center justify-center gap-1.5 text-[11px] text-muted-foreground/50">
+        <span>&copy; yukiyokotani</span>
+        <span>&middot;</span>
+        <a
+          href="https://github.com/yukiyokotani/risograph-canvas"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="underline underline-offset-2 hover:text-muted-foreground"
+        >
+          GitHub
+        </a>
+      </footer>
     </div>
   );
 }
