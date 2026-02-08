@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   RisographCanvas,
   type RisographCanvasHandle,
@@ -50,60 +50,20 @@ function useTheme() {
   return { dark, toggle };
 }
 
-/** Canvas でプレースホルダー画像を生成し data URL を返す */
-function generatePlaceholder(w: number, h: number): string {
-  const c = document.createElement("canvas");
-  c.width = w;
-  c.height = h;
-  const ctx = c.getContext("2d")!;
-
-  // グラデーション背景
-  const grad = ctx.createLinearGradient(0, 0, w, h);
-  grad.addColorStop(0, "#2a2a3a");
-  grad.addColorStop(0.5, "#4a3a5a");
-  grad.addColorStop(1, "#1a2a2a");
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, w, h);
-
-  // 幾何学模様（円）
-  const shapes = [
-    { x: w * 0.3, y: h * 0.35, r: w * 0.18, color: "rgba(255,255,255,0.15)" },
-    { x: w * 0.65, y: h * 0.55, r: w * 0.22, color: "rgba(200,180,220,0.12)" },
-    { x: w * 0.5, y: h * 0.7, r: w * 0.14, color: "rgba(180,220,200,0.1)" },
-  ];
-  for (const s of shapes) {
-    ctx.beginPath();
-    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
-    ctx.fillStyle = s.color;
-    ctx.fill();
-  }
-
-  // 対角線
-  ctx.strokeStyle = "rgba(255,255,255,0.08)";
-  ctx.lineWidth = 2;
-  for (let i = -h; i < w; i += 40) {
-    ctx.beginPath();
-    ctx.moveTo(i, 0);
-    ctx.lineTo(i + h, h);
-    ctx.stroke();
-  }
-
-  return c.toDataURL("image/png");
-}
+const SAMPLE_IMAGE = `${import.meta.env.BASE_URL}sample.jpg`;
 
 const inkEntries = Object.entries(RISO_INKS);
 const presetEntries = Object.entries(PRESETS);
 
 function App() {
-  const placeholder = useMemo(() => generatePlaceholder(600, 400), []);
-  const [imageSrc, setImageSrc] = useState(placeholder);
+  const [imageSrc, setImageSrc] = useState(SAMPLE_IMAGE);
   const [urlInput, setUrlInput] = useState("");
   const [colors, setColors] = useState<RisographColor[]>([
-    ...PRESETS.classic.colors,
+    ...PRESETS.cmyk.colors,
   ]);
-  const [dotSize, setDotSize] = useState(4);
-  const [misregistration, setMisregistration] = useState(2);
-  const [grain, setGrain] = useState(0.1);
+  const [dotSize, setDotSize] = useState(2);
+  const [misregistration, setMisregistration] = useState(1.5);
+  const [grain, setGrain] = useState(0.15);
   const [addColorKey, setAddColorKey] = useState(inkEntries[0][0]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const canvasRef = useRef<RisographCanvasHandle>(null);
@@ -214,7 +174,7 @@ function App() {
           <Label className="mb-2 text-xs uppercase tracking-wider text-muted-foreground">
             Preset
           </Label>
-          <Select defaultValue="classic" onValueChange={handlePresetChange}>
+          <Select defaultValue="cmyk" onValueChange={handlePresetChange}>
             <SelectTrigger className="h-9 w-full overflow-hidden text-xs">
               <SelectValue />
             </SelectTrigger>
