@@ -1,0 +1,374 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  RisographCanvas,
+  type RisographCanvasHandle,
+} from "./components/RisographCanvas";
+import { RISO_INKS, PRESETS } from "./presets";
+import type { RisographColor } from "./lib/risograph";
+import { Download, Moon, Sun } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Slider } from "@/components/ui/slider";
+import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+
+function useTheme() {
+  const [dark, setDark] = useState(
+    () => document.documentElement.classList.contains("dark")
+  );
+
+  const toggle = useCallback(() => {
+    setDark((prev) => {
+      const next = !prev;
+      document.documentElement.classList.toggle("dark", next);
+      localStorage.setItem("theme", next ? "dark" : "light");
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    const mq = matchMedia("(prefers-color-scheme: dark)");
+    const handler = (e: MediaQueryListEvent) => {
+      if (localStorage.getItem("theme")) return;
+      const isDark = e.matches;
+      setDark(isDark);
+      document.documentElement.classList.toggle("dark", isDark);
+    };
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
+
+  return { dark, toggle };
+}
+
+/** Canvas でプレースホルダー画像を生成し data URL を返す */
+function generatePlaceholder(w: number, h: number): string {
+  const c = document.createElement("canvas");
+  c.width = w;
+  c.height = h;
+  const ctx = c.getContext("2d")!;
+
+  // グラデーション背景
+  const grad = ctx.createLinearGradient(0, 0, w, h);
+  grad.addColorStop(0, "#2a2a3a");
+  grad.addColorStop(0.5, "#4a3a5a");
+  grad.addColorStop(1, "#1a2a2a");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, w, h);
+
+  // 幾何学模様（円）
+  const shapes = [
+    { x: w * 0.3, y: h * 0.35, r: w * 0.18, color: "rgba(255,255,255,0.15)" },
+    { x: w * 0.65, y: h * 0.55, r: w * 0.22, color: "rgba(200,180,220,0.12)" },
+    { x: w * 0.5, y: h * 0.7, r: w * 0.14, color: "rgba(180,220,200,0.1)" },
+  ];
+  for (const s of shapes) {
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+    ctx.fillStyle = s.color;
+    ctx.fill();
+  }
+
+  // 対角線
+  ctx.strokeStyle = "rgba(255,255,255,0.08)";
+  ctx.lineWidth = 2;
+  for (let i = -h; i < w; i += 40) {
+    ctx.beginPath();
+    ctx.moveTo(i, 0);
+    ctx.lineTo(i + h, h);
+    ctx.stroke();
+  }
+
+  return c.toDataURL("image/png");
+}
+
+const inkEntries = Object.entries(RISO_INKS);
+const presetEntries = Object.entries(PRESETS);
+
+function App() {
+  const placeholder = useMemo(() => generatePlaceholder(600, 400), []);
+  const [imageSrc, setImageSrc] = useState(placeholder);
+  const [urlInput, setUrlInput] = useState("");
+  const [colors, setColors] = useState<RisographColor[]>([
+    ...PRESETS.classic.colors,
+  ]);
+  const [dotSize, setDotSize] = useState(4);
+  const [misregistration, setMisregistration] = useState(2);
+  const [grain, setGrain] = useState(0.1);
+  const [addColorKey, setAddColorKey] = useState(inkEntries[0][0]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const canvasRef = useRef<RisographCanvasHandle>(null);
+  const { dark, toggle: toggleTheme } = useTheme();
+
+  const handleDownload = () => {
+    const canvas = canvasRef.current?.getCanvas();
+    if (!canvas) return;
+    const link = document.createElement("a");
+    link.download = "risograph.png";
+    link.href = canvas.toDataURL("image/png");
+    link.click();
+  };
+
+  const handlePresetChange = (key: string) => {
+    const preset = PRESETS[key as keyof typeof PRESETS];
+    if (preset) {
+      setColors([...preset.colors]);
+    }
+  };
+
+  const addColor = () => {
+    const ink = RISO_INKS[addColorKey as keyof typeof RISO_INKS];
+    if (ink) {
+      setColors((prev) => [...prev, { ...ink }]);
+    }
+  };
+
+  const removeColor = (index: number) => {
+    setColors((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    setImageSrc(url);
+    setUrlInput("");
+  };
+
+  const handleUrlApply = () => {
+    if (urlInput.trim()) {
+      setImageSrc(urlInput.trim());
+    }
+  };
+
+  return (
+    <div className="mx-auto max-w-4xl px-6 py-10">
+      {/* Header */}
+      <div className="mb-8 flex items-start justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">
+            Risograph Canvas
+          </h1>
+          <p className="text-sm text-muted-foreground">
+            Multi-color risograph print simulator
+          </p>
+        </div>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={toggleTheme}
+          className="h-9 w-9 shrink-0"
+        >
+          {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+          <span className="sr-only">Toggle theme</span>
+        </Button>
+      </div>
+
+      {/* Image Source */}
+      <section className="mb-6">
+        <Label className="mb-2 text-xs uppercase tracking-wider text-muted-foreground">
+          Image
+        </Label>
+        <div className="flex items-center gap-2">
+          <Input
+            value={urlInput}
+            onChange={(e) => setUrlInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleUrlApply()}
+            placeholder="https://..."
+            className="h-9 flex-1 font-mono text-xs"
+          />
+          <Button variant="outline" size="sm" onClick={handleUrlApply}>
+            Apply
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => fileInputRef.current?.click()}
+          >
+            File
+          </Button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            onChange={handleFileChange}
+            className="hidden"
+          />
+        </div>
+      </section>
+
+      <Separator className="mb-6" />
+
+      {/* Controls */}
+      <section className="mb-6 grid grid-cols-2 gap-x-8 gap-y-5 sm:grid-cols-4">
+        <div className="col-span-2 min-w-0 sm:col-span-1">
+          <Label className="mb-2 text-xs uppercase tracking-wider text-muted-foreground">
+            Preset
+          </Label>
+          <Select defaultValue="classic" onValueChange={handlePresetChange}>
+            <SelectTrigger className="h-9 w-full overflow-hidden text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {presetEntries.map(([key, preset]) => (
+                <SelectItem key={key} value={key} className="text-xs">
+                  {preset.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div>
+          <Label className="mb-2 text-xs uppercase tracking-wider text-muted-foreground">
+            Dot Size
+          </Label>
+          <Slider
+            value={[dotSize]}
+            onValueChange={([v]) => setDotSize(v)}
+            min={2}
+            max={12}
+            step={1}
+            className="mt-2"
+          />
+          <span className="mt-1 block text-right font-mono text-[11px] text-muted-foreground">
+            {dotSize}px
+          </span>
+        </div>
+
+        <div>
+          <Label className="mb-2 text-xs uppercase tracking-wider text-muted-foreground">
+            Misregistration
+          </Label>
+          <Slider
+            value={[misregistration]}
+            onValueChange={([v]) => setMisregistration(v)}
+            min={0}
+            max={8}
+            step={0.5}
+            className="mt-2"
+          />
+          <span className="mt-1 block text-right font-mono text-[11px] text-muted-foreground">
+            {misregistration}px
+          </span>
+        </div>
+
+        <div>
+          <Label className="mb-2 text-xs uppercase tracking-wider text-muted-foreground">
+            Grain
+          </Label>
+          <Slider
+            value={[grain]}
+            onValueChange={([v]) => setGrain(v)}
+            min={0}
+            max={0.5}
+            step={0.01}
+            className="mt-2"
+          />
+          <span className="mt-1 block text-right font-mono text-[11px] text-muted-foreground">
+            {grain.toFixed(2)}
+          </span>
+        </div>
+      </section>
+
+      <Separator className="mb-6" />
+
+      {/* Color Chips */}
+      <section className="mb-6">
+        <Label className="mb-3 text-xs uppercase tracking-wider text-muted-foreground">
+          Ink Colors
+        </Label>
+        <div className="flex flex-wrap items-center gap-2">
+          {colors.map((c, i) => (
+            <Badge
+              key={`${c.name}-${i}`}
+              variant="secondary"
+              className="gap-1.5 py-1 pl-1.5 pr-1 text-xs font-normal"
+            >
+              <span
+                className="inline-block h-3 w-3 rounded-full border border-black/10"
+                style={{ background: c.color }}
+              />
+              {c.name}
+              <button
+                onClick={() => removeColor(i)}
+                className="ml-0.5 inline-flex h-4 w-4 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground"
+              >
+                ×
+              </button>
+            </Badge>
+          ))}
+
+          <div className="flex items-center gap-1.5">
+            <Select value={addColorKey} onValueChange={setAddColorKey}>
+              <SelectTrigger className="h-7 w-35 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="max-h-60">
+                {inkEntries.map(([key, ink]) => (
+                  <SelectItem key={key} value={key} className="text-xs">
+                    <span className="flex items-center gap-2">
+                      <span
+                        className="inline-block h-2.5 w-2.5 rounded-full border border-black/10"
+                        style={{ background: ink.color }}
+                      />
+                      {ink.name}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs"
+              onClick={addColor}
+            >
+              + Add
+            </Button>
+          </div>
+        </div>
+      </section>
+
+      {/* Canvas */}
+      <div className="flex justify-center rounded-xl bg-muted/60 p-6">
+        <RisographCanvas
+          ref={canvasRef}
+          src={imageSrc}
+          colors={colors}
+          width={600}
+          dotSize={dotSize}
+          misregistration={misregistration}
+          grain={grain}
+          className="rounded-md shadow-lg"
+        />
+      </div>
+
+      <div className="mt-4 flex items-center justify-between">
+        <p className="text-[11px] text-muted-foreground/70">
+          All processing runs locally in your browser. No images are uploaded or sent to any server.
+        </p>
+        <Button
+          variant="outline"
+          size="sm"
+          className="shrink-0 gap-1.5"
+          onClick={handleDownload}
+        >
+          <Download className="h-3.5 w-3.5" />
+          Download PNG
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+export default App;
