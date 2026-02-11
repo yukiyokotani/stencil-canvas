@@ -10,6 +10,7 @@ import {
   getImageData,
   type RisographColor,
   type HalftoneMode,
+  type ColorMode,
 } from "./lib/risograph";
 import { Download, Moon, Sun } from "lucide-react";
 
@@ -74,6 +75,7 @@ function App() {
   const [noise, setNoise] = useState(0);
   const [transparentBg, setTransparentBg] = useState(false);
   const [halftoneMode, setHalftoneMode] = useState<HalftoneMode>("fm");
+  const [colorMode, setColorMode] = useState<ColorMode>("natural");
   const [downloadScale, setDownloadScale] = useState("1");
   const [addColorKey, setAddColorKey] = useState(inkEntries[0][0]);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -115,6 +117,7 @@ function App() {
         inkOpacity,
         paperColor,
         halftoneMode,
+        colorMode,
         noise,
         transparentBg,
       });
@@ -323,7 +326,19 @@ function App() {
         <p className="mb-3 text-xs font-medium uppercase tracking-wider text-muted-foreground">
           Halftone
         </p>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
+          <div>
+            <Label className="mb-2 text-xs text-muted-foreground">Separation</Label>
+            <Select value={colorMode} onValueChange={(v) => setColorMode(v as ColorMode)}>
+              <SelectTrigger className="h-9 w-full text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="natural" className="text-xs">Natural</SelectItem>
+                <SelectItem value="bold" className="text-xs">Bold</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
           <div>
             <Label className="mb-2 text-xs text-muted-foreground">Mode</Label>
             <Select value={halftoneMode} onValueChange={(v) => setHalftoneMode(v as HalftoneMode)}>
@@ -418,6 +433,7 @@ function App() {
           inkOpacity={inkOpacity}
           paperColor={paperColor}
           halftoneMode={halftoneMode}
+          colorMode={colorMode}
           noise={noise}
           transparentBg={transparentBg}
           className="shadow-lg"

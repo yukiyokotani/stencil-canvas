@@ -11,9 +11,10 @@ import {
   getImageData,
   type RisographColor,
   type HalftoneMode,
+  type ColorMode,
 } from "../lib/risograph";
 
-export type { RisographColor, HalftoneMode };
+export type { RisographColor, HalftoneMode, ColorMode };
 
 export interface RisographCanvasHandle {
   getCanvas: () => HTMLCanvasElement | null;
@@ -31,6 +32,7 @@ export interface RisographCanvasProps {
   inkOpacity?: number;
   paperColor?: string;
   halftoneMode?: HalftoneMode;
+  colorMode?: ColorMode;
   noise?: number;
   transparentBg?: boolean;
   className?: string;
@@ -56,6 +58,7 @@ export const RisographCanvas = forwardRef<
     inkOpacity = 0.85,
     paperColor,
     halftoneMode,
+    colorMode,
     noise = 0,
     transparentBg = false,
     className,
@@ -113,7 +116,7 @@ export const RisographCanvas = forwardRef<
 
   // 処理パラメータのキーを生成し、完了キーと比較して processing を派生
   const paramsKey = [
-    dotSize, density, inkOpacity, halftoneMode, noise, misregistration,
+    dotSize, density, inkOpacity, halftoneMode, colorMode, noise, misregistration,
     transparentBg, paperColor, grain,
     colors.map((c) => c.color).join(","),
   ].join("|");
@@ -122,11 +125,11 @@ export const RisographCanvas = forwardRef<
 
   // 最新パラメータを ref で保持
   const paramsRef = useRef({
-    colors, dotSize, misregistration, grain, density, inkOpacity, paperColor, halftoneMode, noise, transparentBg,
+    colors, dotSize, misregistration, grain, density, inkOpacity, paperColor, halftoneMode, colorMode, noise, transparentBg,
   });
   useEffect(() => {
     paramsRef.current = {
-      colors, dotSize, misregistration, grain, density, inkOpacity, paperColor, halftoneMode, noise, transparentBg,
+      colors, dotSize, misregistration, grain, density, inkOpacity, paperColor, halftoneMode, colorMode, noise, transparentBg,
     };
   });
 
@@ -148,6 +151,7 @@ export const RisographCanvas = forwardRef<
           inkOpacity: p.inkOpacity,
           paperColor: p.paperColor,
           halftoneMode: p.halftoneMode,
+          colorMode: p.colorMode,
           noise: p.noise,
           transparentBg: p.transparentBg,
         });

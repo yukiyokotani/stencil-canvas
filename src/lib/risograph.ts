@@ -9,6 +9,7 @@ import { hexToRgb, type RGB } from "./color";
 import { applyHalftone, type HalftoneMode } from "./halftone";
 
 export type { HalftoneMode };
+export type ColorMode = "natural" | "bold";
 
 export interface RisographColor {
   /** 色の名前 */
@@ -36,6 +37,8 @@ export interface RisographOptions {
   paperColor?: string;
   /** ハーフトーンモード。"am" = ドットサイズ変化、"fm" = ドット密度変化 */
   halftoneMode?: HalftoneMode;
+  /** 色分解モード。"natural" = 忠実な再現、"bold" = 大胆な色分離 */
+  colorMode?: ColorMode;
   /** 印刷の掠れノイズ (0–0.5)。各色レイヤーにランダムな欠けを生成。デフォルト: 0 */
   noise?: number;
   /** 背景を透明にする。インク部分のみ残る */
@@ -177,6 +180,48 @@ function decomposeColors(
 }
 
 /**
+ * Bold モード: NNLS 密度マップを後処理し、大胆な色分離を実現する。
+ *
+ * 1. 競合抑制: 各ピクセルで支配的なインクを強調し、弱いインクを抑制
+ * 2. シグモイドコントラスト: 密度値を 0/1 の両極端に押しやる
+ */
+function applyBoldTransform(maps: Float32Array[], pixelCount: number): void {
+  const n = maps.length;
+  if (n === 0) return;
+
+  const SUPPRESSION_POWER = 2.0;
+  const SIGMOID_GAIN = 6.0;
+  const SIGMOID_MID = 0.35;
+
+  // シグモイド正規化: sigmoid(0)=0, sigmoid(1)=1 となるよう再スケール
+  const s0 = 1 / (1 + Math.exp(SIGMOID_GAIN * SIGMOID_MID));
+  const s1 = 1 / (1 + Math.exp(-SIGMOID_GAIN * (1 - SIGMOID_MID)));
+  const sRange = s1 - s0;
+
+  for (let p = 0; p < pixelCount; p++) {
+    let maxD = 0;
+    for (let i = 0; i < n; i++) {
+      if (maps[i][p] > maxD) maxD = maps[i][p];
+    }
+    if (maxD < 0.01) continue;
+
+    // Phase 1: 競合抑制 — 支配的なインクを残し、弱いインクを抑制
+    for (let i = 0; i < n; i++) {
+      const ratio = maps[i][p] / maxD;
+      maps[i][p] *= Math.pow(ratio, SUPPRESSION_POWER);
+    }
+
+    // Phase 2: シグモイドコントラスト — 中間調を減らし、はっきりした色分離に
+    for (let i = 0; i < n; i++) {
+      const x = maps[i][p];
+      if (x < 0.001) { maps[i][p] = 0; continue; }
+      const sig = 1 / (1 + Math.exp(-SIGMOID_GAIN * (x - SIGMOID_MID)));
+      maps[i][p] = Math.max(0, Math.min(1, (sig - s0) / sRange));
+    }
+  }
+}
+
+/**
  * メインのリソグラフ処理。
  * ソースの ImageData を受け取り、リソグラフ風に加工した結果を canvas に描画する。
  *
@@ -188,7 +233,7 @@ export function processRisograph(
   canvas: HTMLCanvasElement,
   options: RisographOptions
 ): void {
-  const { colors, dotSize, misregistration, grain, density, inkOpacity = 0.85, paperColor, halftoneMode, noise = 0, transparentBg = false } = options;
+  const { colors, dotSize, misregistration, grain, density, inkOpacity = 0.85, paperColor, halftoneMode, colorMode, noise = 0, transparentBg = false } = options;
   const { width, height } = sourceData;
   const paper = paperColor ? hexToRgb(paperColor) : DEFAULT_PAPER;
   // 透明モードでは白紙で合成し、後でアルファを算出
@@ -205,6 +250,11 @@ export function processRisograph(
   // 色分解は常にホワイト基準（暗い紙でも正しく濃度マップを生成するため）
   const WHITE: RGB = { r: 255, g: 255, b: 255 };
   const densityMaps = decomposeColors(sourceData, inkRgbs, WHITE);
+
+  // Bold モード: 密度マップを後処理して大胆な色分離に
+  if (colorMode === "bold") {
+    applyBoldTransform(densityMaps, width * height);
+  }
 
   // 出力バッファを紙の色で初期化
   const outputData = ctx.createImageData(width, height);
