@@ -96,6 +96,13 @@ function applyAMHalftone(
             opacity = 1 - (dist - (radius - edge)) / (2 * edge);
           }
 
+          // サブピクセル補正: ドット半径が 1px 未満の場合、
+          // 物理的にこれ以上小さくできないため透明度で拡張
+          if (radius < 1.0) {
+            const blend = 1 - radius;
+            opacity *= 1 - blend * (1 - Math.sqrt(d));
+          }
+
           maxOpacity = Math.max(maxOpacity, opacity);
         }
       }
