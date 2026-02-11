@@ -12,7 +12,7 @@ import {
   type HalftoneMode,
   type ColorMode,
 } from "./lib/risograph";
-import { Download, Moon, Sun } from "lucide-react";
+import { Download, Info, Moon, Sun } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -27,6 +27,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 
 function useTheme() {
   const [dark, setDark] = useState(
@@ -62,6 +69,101 @@ const SAMPLE_IMAGE = `${import.meta.env.BASE_URL}sample.jpg`;
 const inkEntries = Object.entries(RISO_INKS);
 const presetEntries = Object.entries(PRESETS);
 
+const guide = {
+  en: {
+    title: "Guide",
+    sections: [
+      {
+        heading: "Image",
+        body: "Select an image file from your device. All processing runs entirely in your browser — no images are uploaded to any server.",
+      },
+      {
+        heading: "Paper",
+        body: "Choose the paper color to simulate different paper stocks. Enable \"Transparent\" to export with a transparent background instead of a paper color.",
+      },
+      {
+        heading: "Ink Colors",
+        body: "Select from preset color combinations, or build your own by adding individual risograph ink colors. Each ink becomes a separate color layer. Remove colors by clicking the × on each badge. Opacity controls how strongly the ink covers the paper.",
+      },
+      {
+        heading: "Separation",
+        body: "Controls how the image is decomposed into ink color layers.\n• Natural — Faithfully reproduces the original colors by blending inks proportionally.\n• Bold — Aggressively separates colors for a high-contrast, graphic look typical of artistic risograph prints.",
+      },
+      {
+        heading: "Halftone Mode",
+        body: "Determines how tonal gradation is expressed.\n• Dot Density — Dots are a fixed size; darker areas have more dots (stochastic screening).\n• Dot Size — Dots are arranged in a regular grid; darker areas have larger dots (classic halftone).",
+      },
+      {
+        heading: "Dot Size",
+        body: "Controls the size of halftone dots. Smaller values produce finer detail; larger values create a more visible dot pattern.",
+      },
+      {
+        heading: "Density",
+        body: "Scales the overall ink density. Higher values produce darker, more saturated prints.",
+      },
+      {
+        heading: "Misregistration",
+        body: "Simulates the slight misalignment between color layers that naturally occurs in risograph printing. Higher values make the offset more pronounced.",
+      },
+      {
+        heading: "Noise",
+        body: "Adds ink scuffing and uneven coverage typical of real risograph prints. Higher values create broader, more visible ink unevenness.",
+      },
+      {
+        heading: "Download",
+        body: "Export the result as a PNG image. Choose 1x, 2x, or 4x resolution for higher quality output.",
+      },
+    ],
+  },
+  ja: {
+    title: "ガイド",
+    sections: [
+      {
+        heading: "画像",
+        body: "デバイスから画像ファイルを選択します。すべての処理はブラウザ内で完結し、画像がサーバーに送信されることはありません。",
+      },
+      {
+        heading: "用紙",
+        body: "用紙の色を選択して、異なる紙質をシミュレートできます。「Transparent」を有効にすると、用紙色の代わりに透明な背景で書き出せます。",
+      },
+      {
+        heading: "インクカラー",
+        body: "プリセットの配色から選択するか、個別のリソグラフインクカラーを追加して自由に組み合わせられます。各インクは独立した色版になります。バッジの×をクリックして色を削除できます。Opacityはインクの紙への乗り具合を調整します。",
+      },
+      {
+        heading: "色分解 (Separation)",
+        body: "画像をインクカラーにどのように分解するかを制御します。\n• Natural — インクを比例配合して元の色を忠実に再現します。\n• Bold — 色を大胆に分離し、リソグラフ印刷特有のコントラストの高いグラフィカルな仕上がりにします。",
+      },
+      {
+        heading: "ハーフトーンモード",
+        body: "濃淡の表現方法を決定します。\n• Dot Density — 点のサイズは固定で、暗い部分ほど点の密度が高くなります（確率的スクリーニング）。\n• Dot Size — 点が規則的な格子状に並び、暗い部分ほど点が大きくなります（従来型ハーフトーン）。",
+      },
+      {
+        heading: "ドットサイズ",
+        body: "ハーフトーンの点の大きさを調整します。小さい値は細かいディテールを、大きい値は目に見えるドットパターンを生み出します。",
+      },
+      {
+        heading: "濃度 (Density)",
+        body: "インク全体の濃度をスケーリングします。高い値ほど濃く、彩度の高い仕上がりになります。",
+      },
+      {
+        heading: "版ずれ (Misregistration)",
+        body: "リソグラフ印刷で自然に発生する色版のわずかなずれをシミュレートします。値を大きくするとずれが顕著になります。",
+      },
+      {
+        heading: "ノイズ",
+        body: "実際のリソグラフ印刷に見られるインクの掠れや色ムラを加えます。値を大きくすると、より広範囲にムラが現れます。",
+      },
+      {
+        heading: "ダウンロード",
+        body: "結果をPNG画像として書き出します。1x、2x、4xの解像度を選択して、より高品質な出力が可能です。",
+      },
+    ],
+  },
+} as const;
+
+type GuideLang = "en" | "ja";
+
 function App() {
   const [imageSrc, setImageSrc] = useState(SAMPLE_IMAGE);
   const [colors, setColors] = useState<RisographColor[]>([
@@ -81,6 +183,7 @@ function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const canvasRef = useRef<RisographCanvasHandle>(null);
   const { dark, toggle: toggleTheme } = useTheme();
+  const [guideLang, setGuideLang] = useState<GuideLang>("en");
 
   const [downloading, setDownloading] = useState(false);
 
@@ -167,15 +270,48 @@ function App() {
             Multi-color risograph print simulator
           </p>
         </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={toggleTheme}
-          className="h-9 w-9 shrink-0"
-        >
-          {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-          <span className="sr-only">Toggle theme</span>
-        </Button>
+        <div className="flex items-center gap-1">
+          <Dialog>
+            <DialogTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0">
+                <Info className="h-4 w-4" />
+                <span className="sr-only">Guide</span>
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-h-[80vh] overflow-y-auto sm:max-w-lg">
+              <DialogHeader>
+                <div className="flex items-center justify-between pr-6">
+                  <DialogTitle>{guide[guideLang].title}</DialogTitle>
+                  <button
+                    onClick={() => setGuideLang((l) => (l === "ja" ? "en" : "ja"))}
+                    className="rounded border border-input px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent"
+                  >
+                    {guideLang === "ja" ? "English" : "日本語"}
+                  </button>
+                </div>
+              </DialogHeader>
+              <div className="space-y-4">
+                {guide[guideLang].sections.map((s) => (
+                  <div key={s.heading}>
+                    <h3 className="mb-1 text-sm font-medium">{s.heading}</h3>
+                    <p className="whitespace-pre-line text-xs leading-relaxed text-muted-foreground">
+                      {s.body}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </DialogContent>
+          </Dialog>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={toggleTheme}
+            className="h-9 w-9 shrink-0"
+          >
+            {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+            <span className="sr-only">Toggle theme</span>
+          </Button>
+        </div>
       </div>
 
       {/* Image */}
