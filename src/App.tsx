@@ -175,7 +175,7 @@ type GuideLang = "en" | "ja";
 function App() {
   const [imageSrc, setImageSrc] = useState(SAMPLE_IMAGE);
   const [colors, setColors] = useState<RisographColor[]>([
-    ...PRESETS.cmyk.colors,
+    ...PRESETS.tricolor.colors,
   ]);
   const [dotSize, setDotSize] = useState(0.5);
   const [misregistration, setMisregistration] = useState(2);
