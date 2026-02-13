@@ -5,10 +5,10 @@ import {
 } from "./components/RisographCanvas";
 import { RISO_INKS, PRESETS } from "./presets";
 import {
-  processRisograph,
   loadImage,
   getImageData,
   type RisographColor,
+  type RisographOptions,
   type HalftoneMode,
   type ColorMode,
 } from "./lib/risograph";
@@ -209,7 +209,7 @@ function App() {
       return;
     }
 
-    // Higher res: re-render offscreen
+    // Higher res: Web Worker でオフスレッド処理
     setDownloading(true);
     try {
       const img = await loadImage(imageSrc);
@@ -218,8 +218,7 @@ function App() {
         (img.naturalHeight / img.naturalWidth) * targetWidth
       );
       const imageData = getImageData(img, targetWidth, targetHeight);
-      const offscreen = document.createElement("canvas");
-      processRisograph(imageData, offscreen, {
+      const options: RisographOptions = {
         colors,
         dotSize,
         misregistration,
@@ -231,7 +230,37 @@ function App() {
         colorMode,
         noise,
         transparentBg,
+      };
+
+      const pixels = await new Promise<Uint8ClampedArray>((resolve, reject) => {
+        const worker = new Worker(
+          new URL("./lib/risograph.worker.ts", import.meta.url),
+          { type: "module" },
+        );
+        worker.onmessage = (e: MessageEvent<Uint8ClampedArray>) => {
+          resolve(e.data);
+          worker.terminate();
+        };
+        worker.onerror = (e) => {
+          reject(new Error(e.message));
+          worker.terminate();
+        };
+        worker.postMessage({
+          data: imageData.data,
+          width: imageData.width,
+          height: imageData.height,
+          options,
+        });
       });
+
+      const offscreen = document.createElement("canvas");
+      offscreen.width = targetWidth;
+      offscreen.height = targetHeight;
+      const ctx = offscreen.getContext("2d")!;
+      const output = ctx.createImageData(targetWidth, targetHeight);
+      output.data.set(pixels);
+      ctx.putImageData(output, 0, 0);
+
       const link = document.createElement("a");
       link.download = "risograph.png";
       link.href = offscreen.toDataURL("image/png");

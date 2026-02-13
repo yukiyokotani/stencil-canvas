@@ -11,6 +11,13 @@ import { applyHalftone, type HalftoneMode } from "./halftone";
 export type { HalftoneMode };
 export type ColorMode = "natural" | "bold";
 
+/** ImageData 互換の軽量インターフェース（Web Worker でも使える） */
+export interface ImageDataLike {
+  readonly data: Uint8ClampedArray;
+  readonly width: number;
+  readonly height: number;
+}
+
 export interface RisographColor {
   /** 色の名前 */
   name: string;
@@ -91,7 +98,7 @@ const DEFAULT_PAPER: RGB = { r: 245, g: 240, b: 232 };
  * 各インクの色相に応じた濃度マップが生成される。
  */
 function decomposeColors(
-  imageData: ImageData,
+  imageData: ImageDataLike,
   inkRgbs: RGB[],
   paper: RGB
 ): Float32Array[] {
@@ -222,27 +229,19 @@ function applyBoldTransform(maps: Float32Array[], pixelCount: number): void {
 }
 
 /**
- * メインのリソグラフ処理。
- * ソースの ImageData を受け取り、リソグラフ風に加工した結果を canvas に描画する。
- *
- * 色分解はホワイト基準で行い、インクは source-over（不透明）で合成する。
- * これにより暗い紙色でもインクが正しく表示される。
+ * DOM 非依存のリソグラフ処理。
+ * ソースのピクセルデータを受け取り、加工済みのピクセル配列を返す。
+ * Web Worker からも呼び出し可能。
  */
-export function processRisograph(
-  sourceData: ImageData,
-  canvas: HTMLCanvasElement,
+export function computeRisograph(
+  sourceData: ImageDataLike,
   options: RisographOptions
-): void {
+): Uint8ClampedArray {
   const { colors, dotSize, misregistration, grain, density, inkOpacity = 0.85, paperColor, halftoneMode, colorMode, noise = 0, transparentBg = false } = options;
   const { width, height } = sourceData;
   const paper = paperColor ? hexToRgb(paperColor) : DEFAULT_PAPER;
   // 透明モードでは白紙で合成し、後でアルファを算出
   const renderPaper = transparentBg ? { r: 255, g: 255, b: 255 } : paper;
-
-  canvas.width = width;
-  canvas.height = height;
-
-  const ctx = canvas.getContext("2d")!;
 
   // インク RGB を取得
   const inkRgbs = colors.map((c) => hexToRgb(c.color));
@@ -257,8 +256,7 @@ export function processRisograph(
   }
 
   // 出力バッファを紙の色で初期化
-  const outputData = ctx.createImageData(width, height);
-  const out = outputData.data;
+  const out = new Uint8ClampedArray(width * height * 4);
   for (let i = 0; i < width * height; i++) {
     const off = i * 4;
     out[off] = renderPaper.r;
@@ -394,6 +392,25 @@ export function processRisograph(
     }
   }
 
+  return out;
+}
+
+/**
+ * メインのリソグラフ処理。
+ * ソースの ImageData を受け取り、リソグラフ風に加工した結果を canvas に描画する。
+ */
+export function processRisograph(
+  sourceData: ImageData,
+  canvas: HTMLCanvasElement,
+  options: RisographOptions
+): void {
+  const { width, height } = sourceData;
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d")!;
+  const pixels = computeRisograph(sourceData, options);
+  const outputData = ctx.createImageData(width, height);
+  outputData.data.set(pixels);
   ctx.putImageData(outputData, 0, 0);
 }
 
