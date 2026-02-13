@@ -1,13 +1,13 @@
-# Risograph Canvas
+# Stencil Canvas
 
-Multi-color risograph print simulator built with React + TypeScript + Canvas API.
+Multi-color stencil print simulator built with React + TypeScript + Canvas API.
 
-**Demo:** https://yukiyokotani.github.io/risograph-canvas/
+**Demo:** https://yukiyokotani.github.io/stencil-canvas/
 
 ## Features
 
-- Upload any image or paste a URL to apply risograph-style processing
-- Choose from 60+ authentic risograph ink colors
+- Upload any image to apply stencil-style processing
+- Choose from 60+ ink colors
 - Adjustable halftone dot size, misregistration (plate offset), and grain noise
 - NNLS-based color decomposition for accurate multi-color separation
 - Subtractive color mixing via multiply blending

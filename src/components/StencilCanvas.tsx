@@ -6,23 +6,23 @@ import {
   forwardRef,
 } from "react";
 import {
-  processRisograph,
+  processStencil,
   loadImage,
   getImageData,
-  type RisographColor,
+  type StencilColor,
   type HalftoneMode,
   type ColorMode,
-} from "../lib/risograph";
+} from "../lib/stencil";
 
-export type { RisographColor, HalftoneMode, ColorMode };
+export type { StencilColor, HalftoneMode, ColorMode };
 
-export interface RisographCanvasHandle {
+export interface StencilCanvasHandle {
   getCanvas: () => HTMLCanvasElement | null;
 }
 
-export interface RisographCanvasProps {
+export interface StencilCanvasProps {
   src: string;
-  colors: RisographColor[];
+  colors: StencilColor[];
   width?: number;
   height?: number;
   dotSize?: number;
@@ -42,10 +42,10 @@ export interface RisographCanvasProps {
 /** スライダー操作が止まってからの待ち時間 */
 const DEBOUNCE_MS = 300;
 
-export const RisographCanvas = forwardRef<
-  RisographCanvasHandle,
-  RisographCanvasProps
->(function RisographCanvas(
+export const StencilCanvas = forwardRef<
+  StencilCanvasHandle,
+  StencilCanvasProps
+>(function StencilCanvas(
   {
     src,
     colors,
@@ -133,7 +133,7 @@ export const RisographCanvas = forwardRef<
     };
   });
 
-  // debounce でリソグラフ処理を実行
+  // debounce でステンシル印刷処理を実行
   useEffect(() => {
     if (!imageData) return;
 
@@ -142,7 +142,7 @@ export const RisographCanvas = forwardRef<
         const canvas = canvasRef.current;
         if (!canvas) return;
         const p = paramsRef.current;
-        processRisograph(imageData, canvas, {
+        processStencil(imageData, canvas, {
           colors: p.colors,
           dotSize: p.dotSize,
           misregistration: p.misregistration,

@@ -1,5 +1,5 @@
 /**
- * リソグラフ効果のコアロジック
+ * ステンシル印刷効果のコアロジック
  *
  * 画像を複数のスポットカラーに色分解し、
  * ハーフトーン処理を施して合成する。
@@ -18,7 +18,7 @@ export interface ImageDataLike {
   readonly height: number;
 }
 
-export interface RisographColor {
+export interface StencilColor {
   /** 色の名前 */
   name: string;
   /** hex カラーコード (#RRGGBB) */
@@ -27,9 +27,9 @@ export interface RisographColor {
   angle?: number;
 }
 
-export interface RisographOptions {
+export interface StencilOptions {
   /** スポットカラーの配列 */
-  colors: RisographColor[];
+  colors: StencilColor[];
   /** ハーフトーンのドットサイズ (px) */
   dotSize: number;
   /** 版ずれのピクセル量 */
@@ -229,13 +229,13 @@ function applyBoldTransform(maps: Float32Array[], pixelCount: number): void {
 }
 
 /**
- * DOM 非依存のリソグラフ処理。
+ * DOM 非依存のステンシル印刷処理。
  * ソースのピクセルデータを受け取り、加工済みのピクセル配列を返す。
  * Web Worker からも呼び出し可能。
  */
-export function computeRisograph(
+export function computeStencil(
   sourceData: ImageDataLike,
-  options: RisographOptions
+  options: StencilOptions
 ): Uint8ClampedArray {
   const { colors, dotSize, misregistration, grain, density, inkOpacity = 0.85, paperColor, halftoneMode, colorMode, noise = 0, transparentBg = false } = options;
   const { width, height } = sourceData;
@@ -396,19 +396,19 @@ export function computeRisograph(
 }
 
 /**
- * メインのリソグラフ処理。
- * ソースの ImageData を受け取り、リソグラフ風に加工した結果を canvas に描画する。
+ * メインのステンシル印刷処理。
+ * ソースの ImageData を受け取り、ステンシル印刷風に加工した結果を canvas に描画する。
  */
-export function processRisograph(
+export function processStencil(
   sourceData: ImageData,
   canvas: HTMLCanvasElement,
-  options: RisographOptions
+  options: StencilOptions
 ): void {
   const { width, height } = sourceData;
   canvas.width = width;
   canvas.height = height;
   const ctx = canvas.getContext("2d")!;
-  const pixels = computeRisograph(sourceData, options);
+  const pixels = computeStencil(sourceData, options);
   const outputData = ctx.createImageData(width, height);
   outputData.data.set(pixels);
   ctx.putImageData(outputData, 0, 0);

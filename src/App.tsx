@@ -1,17 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  RisographCanvas,
-  type RisographCanvasHandle,
-} from "./components/RisographCanvas";
-import { RISO_INKS, PRESETS } from "./presets";
+  StencilCanvas,
+  type StencilCanvasHandle,
+} from "./components/StencilCanvas";
+import { INKS, PRESETS } from "./presets";
 import {
   loadImage,
   getImageData,
-  type RisographColor,
-  type RisographOptions,
+  type StencilColor,
+  type StencilOptions,
   type HalftoneMode,
   type ColorMode,
-} from "./lib/risograph";
+} from "./lib/stencil";
 import { Download, Info, Moon, Sun } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -66,7 +66,7 @@ function useTheme() {
 
 const SAMPLE_IMAGE = `${import.meta.env.BASE_URL}sample.jpg`;
 
-const inkEntries = Object.entries(RISO_INKS);
+const inkEntries = Object.entries(INKS);
 const presetEntries = Object.entries(PRESETS);
 
 const guide = {
@@ -83,11 +83,11 @@ const guide = {
       },
       {
         heading: "Ink Colors",
-        body: "Select from preset color combinations, or build your own by adding individual risograph ink colors. Each ink becomes a separate color layer. Remove colors by clicking the × on each badge. Opacity controls how strongly the ink covers the paper.",
+        body: "Select from preset color combinations, or build your own by adding individual stencil ink colors. Each ink becomes a separate color layer. Remove colors by clicking the × on each badge. Opacity controls how strongly the ink covers the paper.",
       },
       {
         heading: "Separation",
-        body: "Controls how the image is decomposed into ink color layers.\n• Natural — Faithfully reproduces the original colors by blending inks proportionally.\n• Bold — Aggressively separates colors for a high-contrast, graphic look typical of artistic risograph prints.",
+        body: "Controls how the image is decomposed into ink color layers.\n• Natural — Faithfully reproduces the original colors by blending inks proportionally.\n• Bold — Aggressively separates colors for a high-contrast, graphic look typical of artistic stencil prints.",
       },
       {
         heading: "Halftone Mode",
@@ -103,11 +103,11 @@ const guide = {
       },
       {
         heading: "Misregistration",
-        body: "Simulates the slight misalignment between color layers that naturally occurs in risograph printing. Higher values make the offset more pronounced.",
+        body: "Simulates the slight misalignment between color layers that naturally occurs in stencil printing. Higher values make the offset more pronounced.",
       },
       {
         heading: "Noise",
-        body: "Adds ink scuffing and uneven coverage typical of real risograph prints. Higher values create broader, more visible ink unevenness.",
+        body: "Adds ink scuffing and uneven coverage typical of real stencil prints. Higher values create broader, more visible ink unevenness.",
       },
       {
         heading: "Download",
@@ -132,11 +132,11 @@ const guide = {
       },
       {
         heading: "インクカラー",
-        body: "プリセットの配色から選択するか、個別のリソグラフインクカラーを追加して自由に組み合わせられます。各インクは独立した色版になります。バッジの×をクリックして色を削除できます。Opacityはインクの紙への乗り具合を調整します。",
+        body: "プリセットの配色から選択するか、個別のステンシルインクカラーを追加して自由に組み合わせられます。各インクは独立した色版になります。バッジの×をクリックして色を削除できます。Opacityはインクの紙への乗り具合を調整します。",
       },
       {
         heading: "色分解 (Separation)",
-        body: "画像をインクカラーにどのように分解するかを制御します。\n• Natural — インクを比例配合して元の色を忠実に再現します。\n• Bold — 色を大胆に分離し、リソグラフ印刷特有のコントラストの高いグラフィカルな仕上がりにします。",
+        body: "画像をインクカラーにどのように分解するかを制御します。\n• Natural — インクを比例配合して元の色を忠実に再現します。\n• Bold — 色を大胆に分離し、ステンシル印刷特有のコントラストの高いグラフィカルな仕上がりにします。",
       },
       {
         heading: "ハーフトーンモード",
@@ -152,11 +152,11 @@ const guide = {
       },
       {
         heading: "版ずれ (Misregistration)",
-        body: "リソグラフ印刷で自然に発生する色版のわずかなずれをシミュレートします。値を大きくするとずれが顕著になります。",
+        body: "ステンシル印刷で自然に発生する色版のわずかなずれをシミュレートします。値を大きくするとずれが顕著になります。",
       },
       {
         heading: "ノイズ",
-        body: "実際のリソグラフ印刷に見られるインクの掠れや色ムラを加えます。値を大きくすると、より広範囲にムラが現れます。",
+        body: "実際のステンシル印刷に見られるインクの掠れや色ムラを加えます。値を大きくすると、より広範囲にムラが現れます。",
       },
       {
         heading: "ダウンロード",
@@ -174,7 +174,7 @@ type GuideLang = "en" | "ja";
 
 function App() {
   const [imageSrc, setImageSrc] = useState(SAMPLE_IMAGE);
-  const [colors, setColors] = useState<RisographColor[]>([
+  const [colors, setColors] = useState<StencilColor[]>([
     ...PRESETS.tricolor.colors,
   ]);
   const [dotSize, setDotSize] = useState(0.5);
@@ -189,7 +189,7 @@ function App() {
   const [downloadScale, setDownloadScale] = useState("1");
   const [addColorKey, setAddColorKey] = useState(inkEntries[0][0]);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const canvasRef = useRef<RisographCanvasHandle>(null);
+  const canvasRef = useRef<StencilCanvasHandle>(null);
   const { dark, toggle: toggleTheme } = useTheme();
   const [guideLang, setGuideLang] = useState<GuideLang>("en");
 
@@ -203,7 +203,7 @@ function App() {
       const canvas = canvasRef.current?.getCanvas();
       if (!canvas) return;
       const link = document.createElement("a");
-      link.download = "risograph.png";
+      link.download = "stencil.png";
       link.href = canvas.toDataURL("image/png");
       link.click();
       return;
@@ -218,7 +218,7 @@ function App() {
         (img.naturalHeight / img.naturalWidth) * targetWidth
       );
       const imageData = getImageData(img, targetWidth, targetHeight);
-      const options: RisographOptions = {
+      const options: StencilOptions = {
         colors,
         dotSize,
         misregistration,
@@ -234,7 +234,7 @@ function App() {
 
       const pixels = await new Promise<Uint8ClampedArray>((resolve, reject) => {
         const worker = new Worker(
-          new URL("./lib/risograph.worker.ts", import.meta.url),
+          new URL("./lib/stencil.worker.ts", import.meta.url),
           { type: "module" },
         );
         worker.onmessage = (e: MessageEvent<Uint8ClampedArray>) => {
@@ -262,7 +262,7 @@ function App() {
       ctx.putImageData(output, 0, 0);
 
       const link = document.createElement("a");
-      link.download = "risograph.png";
+      link.download = "stencil.png";
       link.href = offscreen.toDataURL("image/png");
       link.click();
     } finally {
@@ -278,7 +278,7 @@ function App() {
   };
 
   const addColor = () => {
-    const ink = RISO_INKS[addColorKey as keyof typeof RISO_INKS];
+    const ink = INKS[addColorKey as keyof typeof INKS];
     if (ink) {
       setColors((prev) => [...prev, { ...ink }]);
     }
@@ -301,10 +301,10 @@ function App() {
       <div className="mb-8 flex items-start justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">
-            Risograph Canvas
+            Stencil Canvas
           </h1>
           <p className="text-sm text-muted-foreground">
-            Multi-color risograph print simulator
+            Multi-color stencil print simulator
           </p>
         </div>
         <div className="flex items-center gap-1">
@@ -597,7 +597,7 @@ function App() {
 
       {/* Canvas */}
       <div className="flex justify-center rounded-xl bg-muted/60 p-2 sm:p-6">
-        <RisographCanvas
+        <StencilCanvas
           ref={canvasRef}
           src={imageSrc}
           colors={colors}
@@ -643,7 +643,7 @@ function App() {
         <span>&copy; yukiyokotani</span>
         <span>&middot;</span>
         <a
-          href="https://github.com/yukiyokotani/risograph-canvas"
+          href="https://github.com/yukiyokotani/stencil-canvas"
           target="_blank"
           rel="noopener noreferrer"
           className="inline-flex items-center gap-1 hover:text-muted-foreground"

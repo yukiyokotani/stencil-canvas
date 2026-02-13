@@ -1,14 +1,14 @@
-import type { RisographColor } from "./lib/risograph";
+import type { StencilColor } from "./lib/stencil";
 
-/** リソグラフで実際に使われる代表的なインクカラー */
-export const RISO_INKS = {
+/** ステンシル印刷で実際に使われる代表的なインクカラー */
+export const INKS = {
   black: { name: "Black", color: "#000000" },
   burgundy: { name: "Burgundy", color: "#914E72" },
   blue: { name: "Blue", color: "#0078BF" },
   green: { name: "Green", color: "#00A95C" },
   mediumBlue: { name: "Medium Blue", color: "#3255A4" },
   brightRed: { name: "Bright Red", color: "#F15060" },
-  risofederalBlue: { name: "Federal Blue", color: "#3D5588" },
+  federalBlue: { name: "Federal Blue", color: "#3D5588" },
   purple: { name: "Purple", color: "#765BA7" },
   teal: { name: "Teal", color: "#00838A" },
   flatGold: { name: "Flat Gold", color: "#BB8B41" },
@@ -71,52 +71,52 @@ export const RISO_INKS = {
   fluorescentGreen: { name: "Fl. Green", color: "#44D62C" },
   fluorescentBlue: { name: "Fl. Blue", color: "#4FDBF0" },
   fluorescentYellow: { name: "Fl. Yellow", color: "#FFE916" },
-} as const satisfies Record<string, RisographColor>;
+} as const satisfies Record<string, StencilColor>;
 
 /** 代表的な色の組み合わせプリセット */
 export const PRESETS = {
   classic: {
     name: "Classic (Blue + Red)",
-    colors: [RISO_INKS.blue, RISO_INKS.brightRed],
+    colors: [INKS.blue, INKS.brightRed],
   },
   retro: {
     name: "Retro (Teal + Orange)",
-    colors: [RISO_INKS.teal, RISO_INKS.orange],
+    colors: [INKS.teal, INKS.orange],
   },
   neon: {
     name: "Neon (Fl. Pink + Fl. Green)",
-    colors: [RISO_INKS.fluorescentPink, RISO_INKS.fluorescentGreen],
+    colors: [INKS.fluorescentPink, INKS.fluorescentGreen],
   },
   tricolor: {
     name: "Tricolor (Blue + Red + Yellow)",
-    colors: [RISO_INKS.blue, RISO_INKS.brightRed, RISO_INKS.yellow],
+    colors: [INKS.blue, INKS.brightRed, INKS.yellow],
   },
   cmyk: {
     name: "CMYK-like (Blue + Red + Yellow + Black)",
     colors: [
-      RISO_INKS.blue,
-      RISO_INKS.brightRed,
-      RISO_INKS.yellow,
-      RISO_INKS.black,
+      INKS.blue,
+      INKS.brightRed,
+      INKS.yellow,
+      INKS.black,
     ],
   },
   botanical: {
     name: "Botanical (Green + Burgundy)",
-    colors: [RISO_INKS.green, RISO_INKS.burgundy],
+    colors: [INKS.green, INKS.burgundy],
   },
   midnight: {
     name: "Midnight (Midnight + Violet + Fl. Pink)",
-    colors: [RISO_INKS.midnight, RISO_INKS.violet, RISO_INKS.fluorescentPink],
+    colors: [INKS.midnight, INKS.violet, INKS.fluorescentPink],
   },
   fluorescent: {
     name: "Fluorescent (Fl. Blue + Fl. Pink + Fl. Yellow)",
     colors: [
-      RISO_INKS.fluorescentBlue,
-      RISO_INKS.fluorescentPink,
-      RISO_INKS.fluorescentYellow,
+      INKS.fluorescentBlue,
+      INKS.fluorescentPink,
+      INKS.fluorescentYellow,
     ],
   },
 } as const satisfies Record<
   string,
-  { name: string; colors: readonly RisographColor[] }
+  { name: string; colors: readonly StencilColor[] }
 >;
