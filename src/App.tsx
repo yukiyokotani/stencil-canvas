@@ -291,7 +291,7 @@ function App() {
   const [colorMode, setColorMode] = useState<ColorMode>("natural");
   const [downloadScale, setDownloadScale] = useState("1");
   const [presetKey, setPresetKey] = useState("cmyk");
-  const [addColorKey, setAddColorKey] = useState(inkEntries[0][0]);
+  const [addColorKey, setAddColorKey] = useState("black");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const canvasRef = useRef<StencilCanvasHandle>(null);
   const previewRef = useRef<HTMLDivElement>(null);
@@ -581,10 +581,10 @@ function App() {
               </p>
               {colors.length > 0 && (
                 <button
-                  className="text-xs text-muted-foreground transition-colors hover:text-foreground"
+                  className="inline-flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
                   onClick={() => { setColors([]); setPresetKey(""); }}
                 >
-                  <RotateCcw className="inline h-3 w-3" /> Reset
+                  <RotateCcw className="h-3 w-3" /> Reset
                 </button>
               )}
             </div>
