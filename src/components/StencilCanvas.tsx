@@ -122,6 +122,7 @@ export const StencilCanvas = forwardRef<
   ].join("|");
   const [processedKey, setProcessedKey] = useState("");
   const processing = imageData !== null && processedKey !== paramsKey;
+  const hasRendered = processedKey !== "";
 
   // 最新パラメータを ref で保持
   const paramsRef = useRef({
@@ -167,7 +168,13 @@ export const StencilCanvas = forwardRef<
   const showIndicator = loading || processing;
 
   return (
-    <div style={{ position: "relative", display: "inline-block", maxWidth: "100%" }}>
+    <div style={{
+      position: "relative",
+      display: "inline-block",
+      maxWidth: "100%",
+      opacity: hasRendered ? 1 : 0,
+      transition: "opacity 0.3s",
+    }}>
       <canvas
         ref={canvasRef}
         className={className}
@@ -175,12 +182,10 @@ export const StencilCanvas = forwardRef<
           display: "block",
           maxWidth: "100%",
           height: "auto",
-          opacity: loading ? 0.3 : 1,
-          transition: "opacity 0.3s",
           ...style,
         }}
       />
-      {showIndicator && (
+      {hasRendered && showIndicator && (
         <div
           style={{
             position: "absolute",

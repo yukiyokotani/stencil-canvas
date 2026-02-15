@@ -190,10 +190,56 @@ function App() {
   const [addColorKey, setAddColorKey] = useState(inkEntries[0][0]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const canvasRef = useRef<StencilCanvasHandle>(null);
+  const previewRef = useRef<HTMLDivElement>(null);
   const { dark, toggle: toggleTheme } = useTheme();
   const [guideLang, setGuideLang] = useState<GuideLang>("en");
 
   const [downloading, setDownloading] = useState(false);
+
+  // Track image aspect ratio (width / height)
+  const [imageAspect, setImageAspect] = useState<number | null>(null);
+  useEffect(() => {
+    setImageAspect(null);
+    loadImage(imageSrc).then((img) => {
+      setImageAspect(img.naturalWidth / img.naturalHeight);
+    });
+  }, [imageSrc]);
+
+  // Measure available space in preview container
+  const [containerSize, setContainerSize] = useState({ width: 600, height: 400 });
+  useEffect(() => {
+    const el = previewRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const { width, height } = entries[0].contentRect;
+      setContainerSize({ width, height });
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // Track whether we're in the lg two-column layout (matches Tailwind lg: breakpoint)
+  const [isLgLayout, setIsLgLayout] = useState(() => window.matchMedia("(min-width: 1024px)").matches);
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 1024px)");
+    const handler = (e: MediaQueryListEvent) => setIsLgLayout(e.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
+
+  // Compute canvas width that fits within container (accounting for padding)
+  const canvasWidth = (() => {
+    if (!imageAspect) return 600;
+    const pad = isLgLayout ? 48 : 24; // lg:p-6 = 24*2, p-3 = 12*2
+    const availW = containerSize.width - pad;
+    if (!isLgLayout) {
+      // Mobile/tablet: scrollable layout, no height constraint
+      return Math.max(100, Math.min(600, availW));
+    }
+    const availH = containerSize.height - pad;
+    const widthFromHeight = availH * imageAspect;
+    return Math.max(100, Math.min(600, availW, widthFromHeight));
+  })();
 
   const handleDownload = async () => {
     const scale = Number(downloadScale);
@@ -296,9 +342,9 @@ function App() {
   };
 
   return (
-    <div className="mx-auto max-w-4xl px-4 py-10 sm:px-6">
+    <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:flex lg:h-screen lg:flex-col lg:overflow-hidden lg:py-6">
       {/* Header */}
-      <div className="mb-8 flex items-start justify-between">
+      <div className="mb-8 flex items-start justify-between lg:mb-4 lg:shrink-0">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">
             Stencil Canvas
@@ -351,295 +397,308 @@ function App() {
         </div>
       </div>
 
-      {/* Image */}
-      <section className="mb-6">
-        <Label className="mb-2 text-xs uppercase tracking-wider text-muted-foreground">
-          Image
-        </Label>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => fileInputRef.current?.click()}
-        >
-          Choose File
-        </Button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          onChange={handleFileChange}
-          className="hidden"
-        />
-        <p className="mt-2 text-[11px] text-muted-foreground/70">
-          All processing runs locally in your browser. No images are uploaded or sent to any server.
-        </p>
-      </section>
-
-      <Separator className="mb-6" />
-
-      {/* Paper */}
-      <section className="mb-6">
-        <p className="mb-3 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-          Paper
-        </p>
-        <div className="flex items-center gap-3">
-          <div className="flex w-28 items-center gap-2">
-            <input
-              type="color"
-              value={paperColor}
-              onChange={(e) => setPaperColor(e.target.value)}
-              disabled={transparentBg}
-              className="h-8 w-8 shrink-0 cursor-pointer rounded border border-input bg-transparent p-0.5 disabled:cursor-not-allowed disabled:opacity-40"
-            />
-            <span className="font-mono text-[11px] text-muted-foreground">
-              {transparentBg ? "transparent" : paperColor}
-            </span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <Checkbox
-              id="transparent-bg"
-              checked={transparentBg}
-              onCheckedChange={(v: boolean) => setTransparentBg(v)}
-            />
-            <Label htmlFor="transparent-bg" className="text-xs text-muted-foreground">
-              Transparent
+      <div className="lg:flex lg:min-h-0 lg:flex-1 lg:gap-8">
+        {/* Controls (left on desktop) */}
+        <div className="sidebar-scroll lg:w-80 lg:shrink-0 lg:overflow-y-scroll lg:py-2 lg:pr-6">
+          {/* Image */}
+          <section className="mb-6">
+            <Label className="mb-2 text-xs uppercase tracking-wider text-muted-foreground">
+              Image
             </Label>
-          </div>
-        </div>
-      </section>
-
-      <Separator className="mb-6" />
-
-      {/* Ink Colors */}
-      <section className="mb-6">
-        <p className="mb-3 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-          Ink Colors
-        </p>
-        <div className="mb-3">
-          <Label className="mb-2 text-xs text-muted-foreground">Preset</Label>
-          <Select defaultValue="cmyk" onValueChange={handlePresetChange}>
-            <SelectTrigger className="h-8 w-full sm:max-w-75 text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {presetEntries.map(([key, preset]) => (
-                <SelectItem key={key} value={key} className="text-xs">
-                  {preset.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {colors.map((c, i) => (
-            <Badge
-              key={`${c.name}-${i}`}
-              variant="secondary"
-              className="gap-1.5 py-1 pl-1.5 pr-1 text-xs font-normal"
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => fileInputRef.current?.click()}
             >
-              <span
-                className="inline-block h-3 w-3 rounded-full border border-black/10"
-                style={{ background: c.color }}
+              Choose File
+            </Button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handleFileChange}
+              className="hidden"
+            />
+            <p className="mt-2 text-[11px] text-muted-foreground/70">
+              All processing runs locally in your browser. No images are uploaded or sent to any server.
+            </p>
+          </section>
+
+          <Separator className="mb-6" />
+
+          {/* Paper */}
+          <section className="mb-6">
+            <p className="mb-3 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Paper
+            </p>
+            <div className="flex items-center gap-3">
+              <div className="flex w-28 items-center gap-2">
+                <input
+                  type="color"
+                  value={paperColor}
+                  onChange={(e) => setPaperColor(e.target.value)}
+                  disabled={transparentBg}
+                  className="h-8 w-8 shrink-0 cursor-pointer rounded border border-input bg-transparent p-0.5 disabled:cursor-not-allowed disabled:opacity-40"
+                />
+                <span className="font-mono text-[11px] text-muted-foreground">
+                  {transparentBg ? "transparent" : paperColor}
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Checkbox
+                  id="transparent-bg"
+                  checked={transparentBg}
+                  onCheckedChange={(v: boolean) => setTransparentBg(v)}
+                />
+                <Label htmlFor="transparent-bg" className="text-xs text-muted-foreground">
+                  Transparent
+                </Label>
+              </div>
+            </div>
+          </section>
+
+          <Separator className="mb-6" />
+
+          {/* Ink Colors */}
+          <section className="mb-6">
+            <p className="mb-3 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Ink Colors
+            </p>
+            <div className="mb-3">
+              <Label className="mb-2 text-xs text-muted-foreground">Preset</Label>
+              <Select defaultValue="cmyk" onValueChange={handlePresetChange}>
+                <SelectTrigger className="h-8 w-full text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {presetEntries.map(([key, preset]) => (
+                    <SelectItem key={key} value={key} className="text-xs">
+                      {preset.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {colors.map((c, i) => (
+                <Badge
+                  key={`${c.name}-${i}`}
+                  variant="secondary"
+                  className="gap-1.5 py-1 pl-1.5 pr-1 text-xs font-normal"
+                >
+                  <span
+                    className="inline-block h-3 w-3 rounded-full border border-black/10"
+                    style={{ background: c.color }}
+                  />
+                  {c.name}
+                  <button
+                    onClick={() => removeColor(i)}
+                    className="ml-0.5 inline-flex h-4 w-4 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground"
+                  >
+                    ×
+                  </button>
+                </Badge>
+              ))}
+              <div className="flex items-center gap-1.5">
+                <Select value={addColorKey} onValueChange={setAddColorKey}>
+                  <SelectTrigger className="h-7 min-w-0 max-w-35 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-60">
+                    {inkEntries.map(([key, ink]) => (
+                      <SelectItem key={key} value={key} className="text-xs">
+                        <span className="flex items-center gap-2">
+                          <span
+                            className="inline-block h-2.5 w-2.5 rounded-full border border-black/10"
+                            style={{ background: ink.color }}
+                          />
+                          {ink.name}
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={addColor}
+                >
+                  + Add
+                </Button>
+              </div>
+            </div>
+            <div className="mt-3">
+              <Label className="mb-2 text-xs text-muted-foreground">Opacity</Label>
+              <Slider
+                value={[inkOpacity]}
+                onValueChange={([v]) => setInkOpacity(v)}
+                min={0.1}
+                max={1}
+                step={0.05}
+                className="mt-2"
               />
-              {c.name}
-              <button
-                onClick={() => removeColor(i)}
-                className="ml-0.5 inline-flex h-4 w-4 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground"
-              >
-                ×
-              </button>
-            </Badge>
-          ))}
-          <div className="flex items-center gap-1.5">
-            <Select value={addColorKey} onValueChange={setAddColorKey}>
-              <SelectTrigger className="h-7 min-w-0 max-w-35 text-xs">
+              <span className="mt-1 block text-right font-mono text-[11px] text-muted-foreground">
+                {Math.round(inkOpacity * 100)}%
+              </span>
+            </div>
+          </section>
+
+          <Separator className="mb-6" />
+
+          {/* Halftone */}
+          <section className="mb-6">
+            <p className="mb-3 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Halftone
+            </p>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-4 lg:grid-cols-2">
+              <div>
+                <Label className="mb-2 text-xs text-muted-foreground">Separation</Label>
+                <Select value={colorMode} onValueChange={(v) => setColorMode(v as ColorMode)}>
+                  <SelectTrigger className="h-9 w-full text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="natural" className="text-xs">Natural</SelectItem>
+                    <SelectItem value="bold" className="text-xs">Bold</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="mb-2 text-xs text-muted-foreground">Mode</Label>
+                <Select value={halftoneMode} onValueChange={(v) => setHalftoneMode(v as HalftoneMode)}>
+                  <SelectTrigger className="h-9 w-full text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="fm" className="text-xs">Dot Density</SelectItem>
+                    <SelectItem value="am" className="text-xs">Dot Size</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="mb-2 text-xs text-muted-foreground">Dot Size</Label>
+                <Slider
+                  value={[dotSize]}
+                  onValueChange={([v]) => setDotSize(v)}
+                  min={0.5}
+                  max={12}
+                  step={0.5}
+                  className="mt-2"
+                />
+                <span className="mt-1 block text-right font-mono text-[11px] text-muted-foreground">
+                  {dotSize.toFixed(1)}px
+                </span>
+              </div>
+              <div>
+                <Label className="mb-2 text-xs text-muted-foreground">Density</Label>
+                <Slider
+                  value={[density]}
+                  onValueChange={([v]) => setDensity(v)}
+                  min={0.5}
+                  max={2}
+                  step={0.1}
+                  className="mt-2"
+                />
+                <span className="mt-1 block text-right font-mono text-[11px] text-muted-foreground">
+                  {density.toFixed(1)}
+                </span>
+              </div>
+            </div>
+          </section>
+
+          {/* Print */}
+          <section className="mb-6">
+            <p className="mb-3 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Print
+            </p>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-1">
+              <div>
+                <Label className="mb-2 text-xs text-muted-foreground">Misregistration</Label>
+                <Slider
+                  value={[misregistration]}
+                  onValueChange={([v]) => setMisregistration(v)}
+                  min={0}
+                  max={8}
+                  step={0.5}
+                  className="mt-2"
+                />
+                <span className="mt-1 block text-right font-mono text-[11px] text-muted-foreground">
+                  {misregistration}px
+                </span>
+              </div>
+              <div>
+                <Label className="mb-2 text-xs text-muted-foreground">Noise</Label>
+                <Slider
+                  value={[noise]}
+                  onValueChange={([v]) => setNoise(v)}
+                  min={0}
+                  max={0.5}
+                  step={0.05}
+                  className="mt-2"
+                />
+                <span className="mt-1 block text-right font-mono text-[11px] text-muted-foreground">
+                  {noise.toFixed(2)}
+                </span>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        {/* Preview (right on desktop) */}
+        <div className="mt-8 lg:mt-0 lg:flex lg:flex-1 lg:min-w-0 lg:flex-col">
+          {/* Canvas area */}
+          <div ref={previewRef} className="grid min-h-0 flex-1 place-items-center rounded-xl bg-muted/60 p-3 lg:p-6">
+            {imageAspect ? (
+              <StencilCanvas
+                ref={canvasRef}
+                src={imageSrc}
+                colors={colors}
+                width={Math.round(canvasWidth)}
+                dotSize={dotSize}
+                misregistration={misregistration}
+                grain={0}
+                density={density}
+                inkOpacity={inkOpacity}
+                paperColor={paperColor}
+                halftoneMode={halftoneMode}
+                colorMode={colorMode}
+                noise={noise}
+                transparentBg={transparentBg}
+                className="max-h-full shadow-lg"
+              />
+            ) : (
+              <span className="text-xs text-muted-foreground">Loading…</span>
+            )}
+          </div>
+
+          {/* Download bar: always visible */}
+          <div className="mt-4 flex shrink-0 items-center justify-center gap-2 sm:justify-end">
+            <Select value={downloadScale} onValueChange={setDownloadScale}>
+              <SelectTrigger className="h-8 w-28 text-xs">
                 <SelectValue />
               </SelectTrigger>
-              <SelectContent className="max-h-60">
-                {inkEntries.map(([key, ink]) => (
-                  <SelectItem key={key} value={key} className="text-xs">
-                    <span className="flex items-center gap-2">
-                      <span
-                        className="inline-block h-2.5 w-2.5 rounded-full border border-black/10"
-                        style={{ background: ink.color }}
-                      />
-                      {ink.name}
-                    </span>
-                  </SelectItem>
-                ))}
+              <SelectContent>
+                <SelectItem value="1" className="text-xs">1x (600px)</SelectItem>
+                <SelectItem value="2" className="text-xs">2x (1200px)</SelectItem>
+                <SelectItem value="4" className="text-xs">4x (2400px)</SelectItem>
               </SelectContent>
             </Select>
             <Button
               variant="outline"
               size="sm"
-              className="h-7 text-xs"
-              onClick={addColor}
+              className="shrink-0 gap-1.5"
+              onClick={handleDownload}
+              disabled={downloading}
             >
-              + Add
+              <Download className="h-3.5 w-3.5" />
+              {downloading ? "Processing..." : "Download PNG"}
             </Button>
           </div>
         </div>
-        <div className="mt-3 sm:w-1/2">
-          <Label className="mb-2 text-xs text-muted-foreground">Opacity</Label>
-          <Slider
-            value={[inkOpacity]}
-            onValueChange={([v]) => setInkOpacity(v)}
-            min={0.1}
-            max={1}
-            step={0.05}
-            className="mt-2"
-          />
-          <span className="mt-1 block text-right font-mono text-[11px] text-muted-foreground">
-            {Math.round(inkOpacity * 100)}%
-          </span>
-        </div>
-      </section>
-
-      <Separator className="mb-6" />
-
-      {/* Halftone */}
-      <section className="mb-6">
-        <p className="mb-3 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-          Halftone
-        </p>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
-          <div>
-            <Label className="mb-2 text-xs text-muted-foreground">Separation</Label>
-            <Select value={colorMode} onValueChange={(v) => setColorMode(v as ColorMode)}>
-              <SelectTrigger className="h-9 w-full text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="natural" className="text-xs">Natural</SelectItem>
-                <SelectItem value="bold" className="text-xs">Bold</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <Label className="mb-2 text-xs text-muted-foreground">Mode</Label>
-            <Select value={halftoneMode} onValueChange={(v) => setHalftoneMode(v as HalftoneMode)}>
-              <SelectTrigger className="h-9 w-full text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="fm" className="text-xs">Dot Density</SelectItem>
-                <SelectItem value="am" className="text-xs">Dot Size</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <Label className="mb-2 text-xs text-muted-foreground">Dot Size</Label>
-            <Slider
-              value={[dotSize]}
-              onValueChange={([v]) => setDotSize(v)}
-              min={0.5}
-              max={12}
-              step={0.5}
-              className="mt-2"
-            />
-            <span className="mt-1 block text-right font-mono text-[11px] text-muted-foreground">
-              {dotSize.toFixed(1)}px
-            </span>
-          </div>
-          <div>
-            <Label className="mb-2 text-xs text-muted-foreground">Density</Label>
-            <Slider
-              value={[density]}
-              onValueChange={([v]) => setDensity(v)}
-              min={0.5}
-              max={2}
-              step={0.1}
-              className="mt-2"
-            />
-            <span className="mt-1 block text-right font-mono text-[11px] text-muted-foreground">
-              {density.toFixed(1)}
-            </span>
-          </div>
-        </div>
-      </section>
-
-      {/* Print */}
-      <section className="mb-6">
-        <p className="mb-3 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-          Print
-        </p>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <div>
-            <Label className="mb-2 text-xs text-muted-foreground">Misregistration</Label>
-            <Slider
-              value={[misregistration]}
-              onValueChange={([v]) => setMisregistration(v)}
-              min={0}
-              max={8}
-              step={0.5}
-              className="mt-2"
-            />
-            <span className="mt-1 block text-right font-mono text-[11px] text-muted-foreground">
-              {misregistration}px
-            </span>
-          </div>
-          <div>
-            <Label className="mb-2 text-xs text-muted-foreground">Noise</Label>
-            <Slider
-              value={[noise]}
-              onValueChange={([v]) => setNoise(v)}
-              min={0}
-              max={0.5}
-              step={0.05}
-              className="mt-2"
-            />
-            <span className="mt-1 block text-right font-mono text-[11px] text-muted-foreground">
-              {noise.toFixed(2)}
-            </span>
-          </div>
-        </div>
-      </section>
-
-      {/* Canvas */}
-      <div className="flex justify-center rounded-xl bg-muted/60 p-2 sm:p-6">
-        <StencilCanvas
-          ref={canvasRef}
-          src={imageSrc}
-          colors={colors}
-          width={600}
-          dotSize={dotSize}
-          misregistration={misregistration}
-          grain={0}
-          density={density}
-          inkOpacity={inkOpacity}
-          paperColor={paperColor}
-          halftoneMode={halftoneMode}
-          colorMode={colorMode}
-          noise={noise}
-          transparentBg={transparentBg}
-          className="shadow-lg"
-        />
       </div>
 
-      <div className="mt-4 flex items-center justify-center gap-2 sm:justify-end">
-        <Select value={downloadScale} onValueChange={setDownloadScale}>
-          <SelectTrigger className="h-8 w-28 text-xs">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="1" className="text-xs">1x (600px)</SelectItem>
-            <SelectItem value="2" className="text-xs">2x (1200px)</SelectItem>
-            <SelectItem value="4" className="text-xs">4x (2400px)</SelectItem>
-          </SelectContent>
-        </Select>
-        <Button
-          variant="outline"
-          size="sm"
-          className="shrink-0 gap-1.5"
-          onClick={handleDownload}
-          disabled={downloading}
-        >
-          <Download className="h-3.5 w-3.5" />
-          {downloading ? "Processing..." : "Download PNG"}
-        </Button>
-      </div>
-
-      <footer className="mt-10 flex items-center justify-center gap-1.5 text-[11px] text-muted-foreground/50">
+      <footer className="mt-10 flex items-center justify-center gap-1.5 text-[11px] text-muted-foreground/50 lg:shrink-0">
         <span>&copy; yukiyokotani</span>
         <span>&middot;</span>
         <a
