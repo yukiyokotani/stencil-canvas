@@ -50,6 +50,8 @@ export interface StencilOptions {
   noise?: number;
   /** 背景を透明にする。インク部分のみ残る */
   transparentBg?: boolean;
+  /** 入力画像の階調を反転する。暗い紙に明るいインクで刷るときに使用 */
+  invert?: boolean;
 }
 
 /** 掠れノイズ用ハッシュ（セル座標+シード → [0,1)） */
@@ -237,35 +239,94 @@ export function computeStencil(
   sourceData: ImageDataLike,
   options: StencilOptions
 ): Uint8ClampedArray {
-  const { colors, dotSize, misregistration, grain, density, inkOpacity = 0.85, paperColor, halftoneMode, colorMode, noise = 0, transparentBg = false } = options;
+  const { colors, dotSize, misregistration, grain, density, inkOpacity = 0.85, paperColor, halftoneMode, colorMode, noise = 0, transparentBg = false, invert = false } = options;
   const { width, height } = sourceData;
   const paper = paperColor ? hexToRgb(paperColor) : DEFAULT_PAPER;
-  // 透明モードでは白紙で合成し、後でアルファを算出
-  const renderPaper = transparentBg ? { r: 255, g: 255, b: 255 } : paper;
+
+  // 階調反転: 暗い紙に明るいインクで刷る場合に使用
+  let source = sourceData;
+  if (invert) {
+    const invData = new Uint8ClampedArray(sourceData.data.length);
+    for (let i = 0; i < sourceData.data.length; i += 4) {
+      invData[i] = 255 - sourceData.data[i];
+      invData[i + 1] = 255 - sourceData.data[i + 1];
+      invData[i + 2] = 255 - sourceData.data[i + 2];
+      invData[i + 3] = sourceData.data[i + 3]; // alpha はそのまま
+    }
+    source = { data: invData, width, height };
+  }
 
   // インク RGB を取得
   const inkRgbs = colors.map((c) => hexToRgb(c.color));
 
   // 色分解は常にホワイト基準（暗い紙でも正しく濃度マップを生成するため）
   const WHITE: RGB = { r: 255, g: 255, b: 255 };
-  const densityMaps = decomposeColors(sourceData, inkRgbs, WHITE);
+
+  // 白に近いインク（吸収ベクトルが小さすぎる）を検出
+  // これらは色分解では正しく密度が出ないため、輝度ベースで直接生成する
+  const ABSORPTION_THRESHOLD = 0.05; // 吸収ベクトルの大きさがこれ以下なら輝度ベース
+  const isLowAbsorption = inkRgbs.map((ink) => {
+    const dR = (255 - ink.r) / 255;
+    const dG = (255 - ink.g) / 255;
+    const dB = (255 - ink.b) / 255;
+    return Math.sqrt(dR * dR + dG * dG + dB * dB) < ABSORPTION_THRESHOLD;
+  });
+
+  // 色分解に渡すインクから低吸収インクを除外
+  const decompInks: RGB[] = [];
+  const decompIndexMap: number[] = []; // decompInks[i] → 元の colors[j]
+  for (let i = 0; i < inkRgbs.length; i++) {
+    if (!isLowAbsorption[i]) {
+      decompIndexMap.push(i);
+      decompInks.push(inkRgbs[i]);
+    }
+  }
+
+  const decompMaps = decompInks.length > 0
+    ? decomposeColors(source, decompInks, WHITE)
+    : [];
+
+  // 密度マップを組み立て
+  const pixelCount = width * height;
+  const densityMaps: Float32Array[] = inkRgbs.map(() => new Float32Array(pixelCount));
+  // 色分解結果をマッピング
+  for (let di = 0; di < decompMaps.length; di++) {
+    densityMaps[decompIndexMap[di]] = decompMaps[di];
+  }
+  // 低吸収インクは輝度ベースで密度を生成
+  for (let i = 0; i < inkRgbs.length; i++) {
+    if (!isLowAbsorption[i]) continue;
+    const map = densityMaps[i];
+    for (let p = 0; p < pixelCount; p++) {
+      const off = p * 4;
+      const a = source.data[off + 3] / 255;
+      // 輝度 (Rec. 709)
+      const lum = (0.2126 * source.data[off] + 0.7152 * source.data[off + 1] + 0.0722 * source.data[off + 2]) / 255;
+      // 暗いほど密度が高い（白紙上の吸収モデルに合わせる）
+      map[p] = (1 - lum) * a;
+    }
+  }
 
   // Bold モード: 密度マップを後処理して大胆な色分離に
   if (colorMode === "bold") {
     applyBoldTransform(densityMaps, width * height);
   }
 
-  // 出力バッファを紙の色で初期化
-  const out = new Uint8ClampedArray(width * height * 4);
-  for (let i = 0; i < width * height; i++) {
+  // Phase 1: インク同士を乗算（減法混色）で合成するバッファ（白ベース）
+  // Phase 2 で紙の色に source-over で合成する
+  const out = new Uint8ClampedArray(pixelCount * 4);
+  // 乗算バッファ: 白紙上のインク透過率を蓄積（255 = 完全透過）
+  for (let i = 0; i < pixelCount; i++) {
     const off = i * 4;
-    out[off] = renderPaper.r;
-    out[off + 1] = renderPaper.g;
-    out[off + 2] = renderPaper.b;
+    out[off] = 255;
+    out[off + 1] = 255;
+    out[off + 2] = 255;
     out[off + 3] = 255;
   }
+  // インクカバレッジ蓄積用（アルファ合成で union を取る）
+  const alphaMap = new Float32Array(pixelCount);
 
-  // 各色レイヤーを source-over で合成
+  // 各色レイヤーを乗算で合成（インク同士の減法混色）
   for (let ci = 0; ci < colors.length; ci++) {
     const rgb = inkRgbs[ci];
     const angle =
@@ -338,56 +399,61 @@ export function computeStencil(
 
         if (opacity < 0.004) continue;
 
-        // インク合成 (乗算ブレンド)
-        // 各インクは半透明フィルタとして光を吸収する。
-        // absorption = 1 - ink/255 (各チャンネルの吸収率)
-        // inkOpacity で吸収の強さを調整し、opacity (ドットカバレッジ) で適用範囲を制御。
-        // 乗算は可換なため色の順序に依存しない。
+        // インク合成 (乗算ブレンド — インク同士の減法混色)
         const dstOff = (y * width + x) * 4;
-        const prevR = out[dstOff];
-        const prevG = out[dstOff + 1];
-        const prevB = out[dstOff + 2];
+        const a = opacity * inkOpacity;
 
-        const f = inkOpacity;
+        // 透過率: 1 - (カバレッジ × 吸収率)
+        const tR = 1 - a * (1 - rgb.r / 255);
+        const tG = 1 - a * (1 - rgb.g / 255);
+        const tB = 1 - a * (1 - rgb.b / 255);
 
-        // 透過率: 1 - (ドットカバレッジ × インク濃度 × 吸収率)
-        const tR = 1 - opacity * f * (1 - rgb.r / 255);
-        const tG = 1 - opacity * f * (1 - rgb.g / 255);
-        const tB = 1 - opacity * f * (1 - rgb.b / 255);
+        out[dstOff] = Math.round(out[dstOff] * tR);
+        out[dstOff + 1] = Math.round(out[dstOff + 1] * tG);
+        out[dstOff + 2] = Math.round(out[dstOff + 2] * tB);
 
-        out[dstOff] = Math.round(prevR * tR);
-        out[dstOff + 1] = Math.round(prevG * tG);
-        out[dstOff + 2] = Math.round(prevB * tB);
+        // カバレッジの union（α合成）
+        const pi = y * width + x;
+        alphaMap[pi] = 1 - (1 - alphaMap[pi]) * (1 - a);
       }
     }
   }
 
-  // 透明背景モード: 白紙上の乗算結果からアルファとストレートカラーを算出
-  // pixel = 255 * T (T = 透過率) → alpha = 1 - min(T), color = 255 - absorption/alpha
+  // Phase 2: 乗算結果（白紙上のインク混色）を実際の紙色に合成
+  // 公式: out = inkBuf + (paper - 255) * (1 - alpha)
+  //   - 白紙 (255) の場合: out = inkBuf（乗算結果そのまま）
+  //   - 黒紙 (0) の場合: インクのない部分 (alpha=0) は黒、インクのある部分は色が出る
   if (transparentBg) {
-    for (let i = 0; i < width * height; i++) {
+    for (let i = 0; i < pixelCount; i++) {
+      const a = alphaMap[i];
       const off = i * 4;
-      const r = out[off];
-      const g = out[off + 1];
-      const b = out[off + 2];
-      // 各チャンネルの吸収量 (0-255)
-      const absR = 255 - r;
-      const absG = 255 - g;
-      const absB = 255 - b;
-      const maxAbs = Math.max(absR, absG, absB);
-      if (maxAbs < 1) {
-        // インクなし → 完全透明
+      if (a < 0.004) {
         out[off] = 0;
         out[off + 1] = 0;
         out[off + 2] = 0;
         out[off + 3] = 0;
       } else {
-        const alpha = maxAbs / 255;
-        // ストレートカラー: absorption / alpha で正規化
-        out[off] = Math.round(255 - absR / alpha);
-        out[off + 1] = Math.round(255 - absG / alpha);
-        out[off + 2] = Math.round(255 - absB / alpha);
-        out[off + 3] = Math.round(alpha * 255);
+        // インク色を抽出: C = (inkBuf - 255*(1-a)) / a
+        const inv = 255 * (1 - a);
+        out[off] = Math.max(0, Math.round((out[off] - inv) / a));
+        out[off + 1] = Math.max(0, Math.round((out[off + 1] - inv) / a));
+        out[off + 2] = Math.max(0, Math.round((out[off + 2] - inv) / a));
+        out[off + 3] = Math.round(a * 255);
+      }
+    }
+  } else {
+    const pR = paper.r - 255;
+    const pG = paper.g - 255;
+    const pB = paper.b - 255;
+    // 白紙なら pR=pG=pB=0 で乗算結果がそのまま出る（従来と同等）
+    if (pR !== 0 || pG !== 0 || pB !== 0) {
+      for (let i = 0; i < pixelCount; i++) {
+        const invA = 1 - alphaMap[i];
+        if (invA < 0.004) continue; // 完全カバー → 乗算結果のまま
+        const off = i * 4;
+        out[off] = Math.max(0, Math.min(255, Math.round(out[off] + pR * invA)));
+        out[off + 1] = Math.max(0, Math.min(255, Math.round(out[off + 1] + pG * invA)));
+        out[off + 2] = Math.max(0, Math.min(255, Math.round(out[off + 2] + pB * invA)));
       }
     }
   }

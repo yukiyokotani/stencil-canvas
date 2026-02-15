@@ -2,6 +2,7 @@ import type { StencilColor } from "./lib/stencil";
 
 /** ステンシル印刷で実際に使われる代表的なインクカラー */
 export const INKS = {
+  white: { name: "White", color: "#FFFFFF" },
   black: { name: "Black", color: "#000000" },
   burgundy: { name: "Burgundy", color: "#914E72" },
   blue: { name: "Blue", color: "#0078BF" },
@@ -11,6 +12,9 @@ export const INKS = {
   federalBlue: { name: "Federal Blue", color: "#3D5588" },
   purple: { name: "Purple", color: "#765BA7" },
   teal: { name: "Teal", color: "#00838A" },
+  gold: { name: "Gold", color: "#CFB53B" },
+  silver: { name: "Silver", color: "#C0C0C0" },
+  bronze: { name: "Bronze", color: "#CD7F32" },
   flatGold: { name: "Flat Gold", color: "#BB8B41" },
   hunterGreen: { name: "Hunter Green", color: "#407060" },
   red: { name: "Red", color: "#FF665E" },

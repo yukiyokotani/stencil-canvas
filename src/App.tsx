@@ -12,7 +12,7 @@ import {
   type HalftoneMode,
   type ColorMode,
 } from "./lib/stencil";
-import { Download, Info, Moon, Sun } from "lucide-react";
+import { Download, Info, Moon, RotateCcw, Sun } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -90,7 +90,7 @@ const guide = {
     sections: [
       {
         heading: "Image",
-        body: "Select an image file from your device. All processing runs entirely in your browser — no images are uploaded to any server.",
+        body: "Select an image file from your device. All processing runs entirely in your browser — no images are uploaded to any server.\n\nEnable \"Invert\" to reverse the tonal values of the input image. This is useful when printing light-colored inks (e.g. white) on dark paper — bright areas in the original become heavily inked.",
       },
       {
         heading: "Paper",
@@ -130,7 +130,7 @@ const guide = {
       },
       {
         heading: "License",
-        body: "This tool is free to use. Copyright of the output images belongs to the owner of the original image.",
+        body: "This tool is free to use for both personal and commercial purposes. Copyright of the output images belongs to the owner of the original image.",
       },
     ],
   },
@@ -139,7 +139,7 @@ const guide = {
     sections: [
       {
         heading: "画像",
-        body: "デバイスから画像ファイルを選択します。すべての処理はブラウザ内で完結し、画像がサーバーに送信されることはありません。",
+        body: "デバイスから画像ファイルを選択します。すべての処理はブラウザ内で完結し、画像がサーバーに送信されることはありません。\n\n「Invert」を有効にすると入力画像の階調が反転されます。暗い紙に明るいインク（白など）で印刷する際に便利です。元画像の明るい部分にインクが多く乗るようになります。",
       },
       {
         heading: "用紙",
@@ -179,7 +179,7 @@ const guide = {
       },
       {
         heading: "ライセンス",
-        body: "本ツールは無料でご利用いただけます。出力画像の著作権は元画像の所有者に帰属します。",
+        body: "本ツールは個人利用・商用利用を問わず無料でご利用いただけます。出力画像の著作権は元画像の所有者に帰属します。",
       },
     ],
   },
@@ -286,9 +286,11 @@ function App() {
   const [paperColor, setPaperColor] = useState("#f5f0e8");
   const [noise, setNoise] = useState(0);
   const [transparentBg, setTransparentBg] = useState(false);
+  const [invert, setInvert] = useState(false);
   const [halftoneMode, setHalftoneMode] = useState<HalftoneMode>("fm");
   const [colorMode, setColorMode] = useState<ColorMode>("natural");
   const [downloadScale, setDownloadScale] = useState("1");
+  const [presetKey, setPresetKey] = useState("cmyk");
   const [addColorKey, setAddColorKey] = useState(inkEntries[0][0]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const canvasRef = useRef<StencilCanvasHandle>(null);
@@ -378,6 +380,7 @@ function App() {
         colorMode,
         noise,
         transparentBg,
+        invert,
       };
 
       const pixels = await new Promise<Uint8ClampedArray>((resolve, reject) => {
@@ -421,6 +424,7 @@ function App() {
   const handlePresetChange = (key: string) => {
     const preset = PRESETS[key as keyof typeof PRESETS];
     if (preset) {
+      setPresetKey(key);
       setColors([...preset.colors]);
     }
   };
@@ -507,13 +511,25 @@ function App() {
             <Label className="mb-2 text-xs uppercase tracking-wider text-muted-foreground">
               Image
             </Label>
-            <Button
-              variant="outline"
-              className="h-9 text-xs"
-              onClick={() => fileInputRef.current?.click()}
-            >
-              Choose File
-            </Button>
+            <div className="flex items-center gap-3">
+              <Button
+                variant="outline"
+                className="h-9 text-xs"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                Choose File
+              </Button>
+              <div className="flex items-center gap-1.5">
+                <Checkbox
+                  id="invert"
+                  checked={invert}
+                  onCheckedChange={(v: boolean) => setInvert(v)}
+                />
+                <Label htmlFor="invert" className="text-xs text-muted-foreground">
+                  Invert
+                </Label>
+              </div>
+            </div>
             <input
               ref={fileInputRef}
               type="file"
@@ -559,14 +575,24 @@ function App() {
 
           {/* Ink Colors */}
           <section className="mb-6">
-            <p className="mb-3 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              Ink Colors
-            </p>
+            <div className="mb-3 flex items-center justify-between">
+              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                Ink Colors
+              </p>
+              {colors.length > 0 && (
+                <button
+                  className="text-xs text-muted-foreground transition-colors hover:text-foreground"
+                  onClick={() => { setColors([]); setPresetKey(""); }}
+                >
+                  <RotateCcw className="inline h-3 w-3" /> Reset
+                </button>
+              )}
+            </div>
             <div className="mb-3">
               <Label className="mb-2 text-xs text-muted-foreground">Preset</Label>
-              <Select defaultValue="cmyk" onValueChange={handlePresetChange}>
+              <Select value={presetKey} onValueChange={handlePresetChange}>
                 <SelectTrigger className="h-9 w-full text-xs">
-                  <SelectValue />
+                  <SelectValue placeholder="Select preset..." />
                 </SelectTrigger>
                 <SelectContent>
                   {presetEntries.map(([key, preset]) => (
@@ -762,6 +788,7 @@ function App() {
                 colorMode={colorMode}
                 noise={noise}
                 transparentBg={transparentBg}
+                invert={invert}
                 className="max-h-full shadow-lg"
               />
             ) : (

@@ -35,6 +35,7 @@ export interface StencilCanvasProps {
   colorMode?: ColorMode;
   noise?: number;
   transparentBg?: boolean;
+  invert?: boolean;
   className?: string;
   style?: React.CSSProperties;
 }
@@ -61,6 +62,7 @@ export const StencilCanvas = forwardRef<
     colorMode,
     noise = 0,
     transparentBg = false,
+    invert = false,
     className,
     style,
   },
@@ -117,7 +119,7 @@ export const StencilCanvas = forwardRef<
   // 処理パラメータのキーを生成し、完了キーと比較して processing を派生
   const paramsKey = [
     dotSize, density, inkOpacity, halftoneMode, colorMode, noise, misregistration,
-    transparentBg, paperColor, grain,
+    transparentBg, invert, paperColor, grain,
     colors.map((c) => c.color).join(","),
   ].join("|");
   const [processedKey, setProcessedKey] = useState("");
@@ -126,11 +128,11 @@ export const StencilCanvas = forwardRef<
 
   // 最新パラメータを ref で保持
   const paramsRef = useRef({
-    colors, dotSize, misregistration, grain, density, inkOpacity, paperColor, halftoneMode, colorMode, noise, transparentBg,
+    colors, dotSize, misregistration, grain, density, inkOpacity, paperColor, halftoneMode, colorMode, noise, transparentBg, invert,
   });
   useEffect(() => {
     paramsRef.current = {
-      colors, dotSize, misregistration, grain, density, inkOpacity, paperColor, halftoneMode, colorMode, noise, transparentBg,
+      colors, dotSize, misregistration, grain, density, inkOpacity, paperColor, halftoneMode, colorMode, noise, transparentBg, invert,
     };
   });
 
@@ -155,6 +157,7 @@ export const StencilCanvas = forwardRef<
           colorMode: p.colorMode,
           noise: p.noise,
           transparentBg: p.transparentBg,
+          invert: p.invert,
         });
         setProcessedKey(paramsKey);
       }, 0);
