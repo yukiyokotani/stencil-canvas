@@ -9,6 +9,11 @@ import {
 
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 8;
+/**
+ * パンで画像を押し出せる限界。各軸で、表示領域のこの割合（画像がそれより小さければ
+ * 画像全体）だけは必ず画像が画面内に残る。
+ */
+const MIN_VISIBLE_FRACTION = 0.25;
 
 const clamp = (v: number, min: number, max: number) =>
   Math.max(min, Math.min(max, v));
@@ -29,6 +34,7 @@ const distance = (a: Point, b: Point) =>
  * - ドラッグ（1本指/マウス）: 拡大時に平行移動
  * - タッチのピンチ（2本指）: 指の中点を中心に拡大縮小＋移動
  * - ボタン用に zoomIn / zoomOut / reset を提供
+ * - パンは画像が表示領域から完全に出ていかない範囲に制限（{@link MIN_VISIBLE_FRACTION}）
  *
  * transform は `transformOrigin: center center` の要素に適用する前提。
  * pan はコンテナ中心を原点としたスクリーン座標（px）。
@@ -56,12 +62,63 @@ export function usePanZoom(
   );
   // React state 同期を rAF で間引くための予約 ID
   const rafRef = useRef<number | null>(null);
+  // 表示領域・画像の伸縮で pan を制限し直すための監視（と、いま監視中の画像要素）
+  const resizeObserverRef = useRef<ResizeObserver | null>(null);
+  const observedContentRef = useRef<Element | null>(null);
 
-  const apply = useCallback((z: number, p: Point) => {
+  // 表示領域（padding を除いた content box。パネルの下に潜った部分は含まない）の寸法
+  const viewSize = useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return null;
+    const cs = getComputedStyle(el);
+    return {
+      width:
+        el.clientWidth -
+        (parseFloat(cs.paddingLeft) || 0) -
+        (parseFloat(cs.paddingRight) || 0),
+      height:
+        el.clientHeight -
+        (parseFloat(cs.paddingTop) || 0) -
+        (parseFloat(cs.paddingBottom) || 0),
+    };
+  }, [containerRef]);
+
+  // 画像が表示領域から完全に出ていかないよう pan を制限する。
+  // 画像の中心は「表示領域の中心 + pan」にあるので、各軸で
+  // |pan| ≤ (表示幅 + 画像幅)/2 − 残す幅 なら残す幅ぶんが画面内に重なる。
+  const clampPan = useCallback(
+    (z: number, p: Point): Point => {
+      const view = viewSize();
+      const el = contentRef?.current;
+      if (!view || !el) return p;
+      const limit = (viewLen: number, imageLen: number) =>
+        Math.max(
+          0,
+          (viewLen + imageLen) / 2 -
+            Math.min(imageLen, viewLen * MIN_VISIBLE_FRACTION)
+        );
+      // offsetWidth/Height は transform の影響を受けない元の寸法
+      const lx = limit(view.width, el.offsetWidth * z);
+      const ly = limit(view.height, el.offsetHeight * z);
+      return { x: clamp(p.x, -lx, lx), y: clamp(p.y, -ly, ly) };
+    },
+    [viewSize, contentRef]
+  );
+
+  const apply = useCallback((z: number, rawPan: Point) => {
+    const p = clampPan(z, rawPan);
     zoomRef.current = z;
     panRef.current = p;
-    // 見た目は CSS 変数へ命令的に適用（コンポジタ更新のみ・再レンダー無し）
     const el = contentRef?.current;
+    // 画像要素は後から現れ、画像を変えると差し替わるので、ここで監視対象を追いかける。
+    // pan が 0 以外になるのは必ずここを通った後なので、それまでに監視が付く。
+    const ro = resizeObserverRef.current;
+    if (ro && el && el !== observedContentRef.current) {
+      if (observedContentRef.current) ro.unobserve(observedContentRef.current);
+      ro.observe(el);
+      observedContentRef.current = el;
+    }
+    // 見た目は CSS 変数へ命令的に適用（コンポジタ更新のみ・再レンダー無し）
     if (el) {
       el.style.setProperty(
         "--pz-transform",
@@ -82,13 +139,28 @@ export function usePanZoom(
         setIsDefault((prev) => (prev === atDefault ? prev : atDefault));
       });
     }
-  }, [contentRef]);
+  }, [contentRef, clampPan]);
 
   useEffect(() => {
     return () => {
       if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
     };
   }, []);
+
+  // ウィンドウやパネルの伸縮で表示領域が、あるいはそれに追従して画像が縮んだら、
+  // 今の pan を制限し直す（画像の寸法は表示領域より遅れて React の再描画で変わる）
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => apply(zoomRef.current, panRef.current));
+    ro.observe(el);
+    resizeObserverRef.current = ro;
+    return () => {
+      ro.disconnect();
+      resizeObserverRef.current = null;
+      observedContentRef.current = null;
+    };
+  }, [containerRef, apply]);
 
   // transform-origin（center center の対象要素＝padding 内でセンタリングされた
   // コンテンツ）の中心をスクリーン座標で返す。コンテナに非対称 padding があっても
