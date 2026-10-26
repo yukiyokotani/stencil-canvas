@@ -3,6 +3,7 @@
 import { hexToRgb, luminance, rgbToLab, type RGB } from "./color";
 import {
   buildLightnessTable,
+  forwardBlackPoint,
   type ImageDataLike,
   type InkDensities,
   type StencilOptions,
@@ -29,15 +30,15 @@ struct Params {
   decompCount: u32,
   kIndex: u32,
   useGcr: u32,
-  _padInvert: u32,
+  bpcEnabled: u32,
 
   snapAmount: f32,
   snapEnabled: u32,
   cutoffEnabled: u32,
-  twoInkFit: u32,
+  forwardFit: u32,
 
   toneEnabled: u32,
-  _tonePad0: u32,
+  blackPoint: f32,
   _tonePad1: u32,
   _tonePad2: u32,
 
@@ -142,34 +143,6 @@ fn coverageForLightness(inkIndex: u32, targetL: f32) -> f32 {
     }
   }
   return 1.0;
-}
-
-// 2色 Natural フィットの1座標更新（CPU applyTwoInkNaturalFit と同一）。
-// 順モデル F は片方の密度に対しアフィンなので、輝度重み付き RGB 距離の最小解は閉形式。
-fn twoInkCoord(sA: vec3<f32>, sB: vec3<f32>, dB: f32, tgt: vec3<f32>, o: f32, pp: vec3<f32>) -> f32 {
-  let Y = vec3<f32>(0.2126, 0.7152, 0.0722);
-  let LAMBDA = 3.0;
-  var BB = 0.0;
-  var Be0 = 0.0;
-  var yB = 0.0;
-  var ye0 = 0.0;
-  for (var c = 0u; c < 3u; c++) {
-    let Rc = 1.0 - o * dB * sB[c];
-    let U = 1.0 - o * dB;
-    let Ac = Rc + (pp[c] - 1.0) * U;
-    let Bc = -o * (sA[c] * Rc + (pp[c] - 1.0) * U);
-    let e0 = Ac - tgt[c];
-    BB += Bc * Bc;
-    Be0 += Bc * e0;
-    yB += Y[c] * Bc;
-    ye0 += Y[c] * e0;
-  }
-  let denom = BB + LAMBDA * yB * yB;
-  if (denom <= 1e-9) {
-    return 0.0;
-  }
-  let d = -(Be0 + LAMBDA * yB * ye0) / denom;
-  return clamp(d, 0.0, 1.0);
 }
 
 @compute @workgroup_size(8, 8)
@@ -287,31 +260,66 @@ fn decompose(@builtin(global_invocation_id) id: vec3<u32>) {
     }
   }
 
-  // 2色 × Natural: 加法 NNLS の代わりに乗算モデルへ直接フィット（snap は無効化済み）。
+  let pp = vec3<f32>(params.paperR / 255.0, params.paperG / 255.0, params.paperB / 255.0);
+
+  // 多色 × Natural: 加法 NNLS の代わりに、黒点補償した目標へ乗算モデルで直接フィットする
+  // （CPU applyForwardModelFit と同一。過緩和付きの射影座標降下を 16 スイープ）。
   // CPU 側は alpha < 0.01（= alphaByte が 3 未満）を除外するので閾値を揃える
-  if (params.twoInkFit != 0u && alphaByte >= 3u) {
-    let sa = deltaAt(0u);
-    let sb = deltaAt(1u);
+  if (params.forwardFit != 0u && alphaByte >= 3u) {
     let o = params.inkOpacity;
-    let pp = vec3<f32>(params.paperR / 255.0, params.paperG / 255.0, params.paperB / 255.0);
-    let tt = vec3<f32>(
-      (1.0 - alpha) * pp.x + alpha * red / 255.0,
-      (1.0 - alpha) * pp.y + alpha * green / 255.0,
-      (1.0 - alpha) * pp.z + alpha * blue / 255.0
-    );
-    var d0 = densities[inkMeta[0u]];
-    var d1 = densities[inkMeta[1u]];
-    for (var sweep = 0u; sweep < 6u; sweep++) {
-      d0 = twoInkCoord(sa, sb, d1, tt, o, pp);
-      d1 = twoInkCoord(sb, sa, d0, tt, o, pp);
+    let Y = vec3<f32>(0.2126, 0.7152, 0.0722);
+    var src = vec3<f32>(red, green, blue) / 255.0;
+    if (params.bpcEnabled != 0u) {
+      let k = params.blackPoint;
+      src = k + src * (pp - k);
     }
-    densities[inkMeta[0u]] = d0;
-    densities[inkMeta[1u]] = d1;
+    let tt = (1.0 - alpha) * pp + alpha * src;
+    var fit: array<f32, 8>;
+    for (var t = 0u; t < params.decompCount; t++) {
+      fit[t] = densities[inkMeta[t]];
+    }
+    for (var sweep = 0u; sweep < 16u; sweep++) {
+      for (var i = 0u; i < params.decompCount; i++) {
+        // ink i 以外を固定すると F はアフィン: F = A + d_i·B
+        var rest = vec3<f32>(1.0);
+        var u = 1.0;
+        for (var j = 0u; j < params.decompCount; j++) {
+          if (j != i) {
+            let a = o * fit[j];
+            u *= 1.0 - a;
+            rest *= vec3<f32>(1.0) - a * deltaAt(j);
+          }
+        }
+        let ac = rest + (pp - 1.0) * u;
+        let bc = -o * (deltaAt(i) * rest + (pp - 1.0) * u);
+        let e0 = ac - tt;
+        let yB = dot(Y, bc);
+        let denom = dot(bc, bc) + 3.0 * yB * yB;
+        var best = 0.0;
+        if (denom > 1e-9) {
+          best = -(dot(bc, e0) + 3.0 * yB * dot(Y, e0)) / denom;
+        }
+        fit[i] = clamp(fit[i] + 1.5 * (best - fit[i]), 0.0, 1.0);
+      }
+    }
+    for (var t = 0u; t < params.decompCount; t++) {
+      densities[inkMeta[t]] = fit[t];
+    }
   }
 
   if (params.snapEnabled != 0u && alphaByte >= 3u) {
     let targetLab = rgbToLab(red, green, blue);
     let targetChroma = length(targetLab.yz);
+    // 単色で合わせる目標明度。フィットが黒点補償しているときはそれに揃える。
+    var snapL = targetLab.x;
+    if (params.bpcEnabled != 0u) {
+      let k = params.blackPoint;
+      snapL = rgbToLab(
+        (k + (red / 255.0) * (pp.x - k)) * 255.0,
+        (k + (green / 255.0) * (pp.y - k)) * 255.0,
+        (k + (blue / 255.0) * (pp.z - k)) * 255.0
+      ).x;
+    }
     let strength = max(0.0, params.snapStrength);
     let residualLow = 0.12 - 0.05 * strength;
     let residualHigh = 0.34 - 0.1 * strength;
@@ -351,7 +359,7 @@ fn decompose(@builtin(global_invocation_id) id: vec3<u32>) {
         for (var t = 0u; t < params.decompCount; t++) {
           let originalIndex = inkMeta[t];
           let absorption = deltaAt(t);
-          let coverage = coverageForLightness(originalIndex, targetLab.x);
+          let coverage = coverageForLightness(originalIndex, snapL);
           let a = coverage * params.inkOpacity;
           let singleLab = rgbToLab(
             ((1.0 - a * absorption.x) +
@@ -654,21 +662,27 @@ export async function decomposeToGpuBuffer(
   params.setUint32(16, decompIndexMap.length, true);
   params.setUint32(20, useGcr ? kIndex : 0, true);
   params.setUint32(24, useGcr ? 1 : 0, true);
-  params.setUint32(28, 0, true); // 旧 invert のスロット（オフセット維持のため残す）
-  const twoInkFitCandidate = inkCount === 2 && decompIndexMap.length === 2;
-  // snap の効き量: 2色はフィットが土台なので separation そのもの、3色以上は従来どおり常時
-  params.setFloat32(32, twoInkFitCandidate ? separation : 1, true);
-  // 2色 × Natural は乗算モデルフィットを使い、従来の snap は無効化する。
-  const twoInkFit = twoInkFitCandidate;
+  // 多色 × Natural は黒点補償した目標へ乗算モデルでフィットし、snap は separation>0 のときだけ。
+  // 黒生成（GCR）の構成は従来どおり NNLS + 常時 snap（CPU と同じ判定）。
+  const forwardFit = decompIndexMap.length >= 2 && !useGcr;
+  const blackPoint = forwardFit ? forwardBlackPoint(decompInks, paper, inkOpacity) : null;
+  params.setUint32(28, blackPoint !== null ? 1 : 0, true);
+  // snap の効き量: フィットが土台なら separation そのもの、GCR は従来どおり常時
+  params.setFloat32(32, forwardFit ? separation : 1, true);
   const snapEnabled =
-    decompIndexMap.length >= 2 && (!twoInkFit || separation > 0);
+    decompIndexMap.length >= 2 && (!forwardFit || separation > 0);
   params.setUint32(36, snapEnabled ? 1 : 0, true);
   params.setUint32(40, highlightCutoff > 0 && highlightCutoff < 1 ? 1 : 0, true);
-  params.setUint32(44, twoInkFit ? 1 : 0, true);
+  params.setUint32(44, forwardFit ? 1 : 0, true);
   params.setUint32(48, toneEnabled ? 1 : 0, true);
-  // 以降は toneEnabled + パディング 3 つ（16 バイト）ぶん後ろへずれる
+  params.setFloat32(52, blackPoint ?? 0, true);
+  // 以降は toneEnabled・blackPoint + パディング 2 つ（16 バイト）ぶん後ろへずれる
   params.setFloat32(64, inkOpacity, true);
-  params.setFloat32(68, twoInkFit ? separation : separation * 1.5, true);
+  params.setFloat32(
+    68,
+    forwardFit && decompIndexMap.length === 2 ? separation : separation * 1.5,
+    true
+  );
   params.setFloat32(72, blackGeneration, true);
   params.setFloat32(76, highlightCutoff, true);
   params.setFloat32(80, paper.r, true);

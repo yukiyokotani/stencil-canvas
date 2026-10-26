@@ -490,6 +490,8 @@ export function coverageForLightness(table: Float32Array, targetL: number): numb
  * 2 版のまま残す（デュオトーンらしさと影の深さを保つ）。
  *
  * strength: 0 = Natural（濁りだけ除去）, 1〜 = Bold（より積極的に単色分離）。
+ * blackPoint があれば、単色で合わせる目標明度を黒点補償後の値にする（フィットと揃える）。
+ * ゲート（彩度・暗さ）は元画像の色で判定する。
  */
 function applySnapSeparation(
   densityMaps: Float32Array[],
@@ -500,7 +502,8 @@ function applySnapSeparation(
   inkRgbs: RGB[],
   inkOpacity: number,
   strength: number,
-  amount: number
+  amount: number,
+  blackPoint: number | null = null
 ): void {
   if (decompIndex.length < 2) return; // 2 版以上でないと「濁る混色」は起きない
   if (amount <= 0) return;
@@ -539,6 +542,13 @@ function applySnapSeparation(
     const darkGate = smoothstep(18, 40, Lt); // 深い影は 2 版で暗さを確保
     const snap = offGamut * satGate * darkGate * scale * amount;
     if (snap < 0.02) continue;
+    const targetL = blackPoint === null
+      ? Lt
+      : rgbToLab(
+          (blackPoint + (data[off] / 255) * (pRn - blackPoint)) * 255,
+          (blackPoint + (data[off + 1] / 255) * (pGn - blackPoint)) * 255,
+          (blackPoint + (data[off + 2] / 255) * (pBn - blackPoint)) * 255
+        )[0];
 
     // 現状の 2 版合成色（＝濁った混色）を求める
     let mr = 1, mg = 1, mb = 1, ia = 1;
@@ -560,7 +570,7 @@ function applySnapSeparation(
     let domCov = 0;
     let bestDE = Infinity;
     for (let t = 0; t < m; t++) {
-      const cov = coverageForLightness(tables[t], Lt);
+      const cov = coverageForLightness(tables[t], targetL);
       const a = cov * inkOpacity;
       const sr = ((1 - a * sR[t]) + (pRn - 1) * (1 - a)) * 255;
       const sg = ((1 - a * sG[t]) + (pGn - 1) * (1 - a)) * 255;
@@ -580,78 +590,131 @@ function applySnapSeparation(
   }
 }
 
+const srgbEncode = (v: number): number =>
+  v <= 0.0031308 ? v * 12.92 : 1.055 * Math.pow(v, 1 / 2.4) - 0.055;
+const srgbDecode = (v: number): number =>
+  v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+
 /**
- * 2色 × Natural 専用の色分解。加法 NNLS の代わりに、実際の乗算（減法）フォワード
+ * 黒点補償（BPC）の黒点。全インクをベタで重ねた「この版構成で出せる最暗色」と
+ * 同じ輝度の中立グレーを、sRGB 符号値（0–1）で返す。
+ *
+ * 明るいインクの組み合わせ（蛍光色など）は全部重ねても黒にならないので、元画像の
+ * 「黒〜最暗色」の範囲は刷り分けられない。色合わせでそのまま狙うと影がまとめて
+ * 「全インクのベタ」に潰れ、ディテールが消える。印刷のカラーマネジメントと同じく
+ * 元画像の黒をこの最暗色へ、白を紙へ線形に写して、階調をインクで出せる範囲へ収める。
+ *
+ * 暗い紙に明るいインクを刷る構成（重ねても紙より暗くならない）では補償しない（null）。
+ */
+export function forwardBlackPoint(
+  inks: RGB[],
+  paper: RGB,
+  inkOpacity: number
+): number | null {
+  const P = [paper.r / 255, paper.g / 255, paper.b / 255];
+  const K = [1, 1, 1];
+  let U = 1;
+  for (const ink of inks) {
+    U *= 1 - inkOpacity;
+    K[0] *= 1 - inkOpacity * (1 - ink.r / 255);
+    K[1] *= 1 - inkOpacity * (1 - ink.g / 255);
+    K[2] *= 1 - inkOpacity * (1 - ink.b / 255);
+  }
+  const Y = [0.2126, 0.7152, 0.0722];
+  let yK = 0;
+  for (let c = 0; c < 3; c++) yK += Y[c] * srgbDecode(K[c] + (P[c] - 1) * U);
+  const k = srgbEncode(yK);
+  // 写像 k + v·(P_c − k) が全チャンネルで単調増加になる（紙より暗い黒点）ときだけ使う
+  return k < Math.min(P[0], P[1], P[2]) ? k : null;
+}
+
+/** 順モデルフィットのスイープ回数と過緩和係数（CPU/GPU 共通） */
+const FIT_SWEEPS = 16;
+const FIT_OMEGA = 1.5;
+
+/**
+ * 多色 × Natural の色分解。加法 NNLS の代わりに、実際の乗算（減法）フォワード
  * モデルへ直接フィットする。分解と描画が同じモデルになるので、ガモット外の色でも
  * 単色化（snap）せず連続的なブレンドで最近色へ収束する（＝ハードな境界が出ない）。
- * 影は両インクの重ね（overprint）へ自然に向かい、二色の階調をフルに使う。
+ * 影は全インクの重ね（overprint）へ自然に向かい、版の階調をフルに使う。
  *
  *   F_c(d) = Π_i(1 − o·d_i·s_ic) + (P_c − 1)·Π_i(1 − o·d_i)   （合成器と同じ順モデル）
  *
  * は各密度についてアフィンなので、各座標の最小二乗解は閉形式。輝度重み付き RGB 距離
- * （超越関数なし＝軽量・CPU/GPU で素直に一致）を使い、NNLS 結果を初期値に数回スイープする。
+ * （超越関数なし＝軽量・CPU/GPU で素直に一致）を使い、NNLS 結果を初期値にスイープする。
+ * 3 色以上では吸収の似たインク（ピンクとオレンジ等）の間で単純な座標降下が
+ * ジグザグして収束しないため、過緩和（SOR）付きの射影座標降下で解く。
+ *
+ * blackPoint（{@link forwardBlackPoint}）があれば、目標色を黒点補償してから合わせる。
  */
-function applyTwoInkNaturalFit(
+function applyForwardModelFit(
   densityMaps: Float32Array[],
   decompIndex: number[],
   source: ImageDataLike,
   paper: RGB,
   inkRgbs: RGB[],
-  inkOpacity: number
+  inkOpacity: number,
+  blackPoint: number | null
 ): void {
-  const i0 = decompIndex[0];
-  const i1 = decompIndex[1];
+  const m = decompIndex.length;
   const o = inkOpacity;
-  const s0: [number, number, number] = [1 - inkRgbs[i0].r / 255, 1 - inkRgbs[i0].g / 255, 1 - inkRgbs[i0].b / 255];
-  const s1: [number, number, number] = [1 - inkRgbs[i1].r / 255, 1 - inkRgbs[i1].g / 255, 1 - inkRgbs[i1].b / 255];
+  const s = decompIndex.map((idx) => [
+    1 - inkRgbs[idx].r / 255,
+    1 - inkRgbs[idx].g / 255,
+    1 - inkRgbs[idx].b / 255,
+  ]);
+  const maps = decompIndex.map((idx) => densityMaps[idx]);
   const P: [number, number, number] = [paper.r / 255, paper.g / 255, paper.b / 255];
   const Y: [number, number, number] = [0.2126, 0.7152, 0.0722];
   const LAMBDA = 3; // 明度（トーン）を優先する重み
+  const k = blackPoint ?? 0;
+  const bpc = blackPoint !== null;
 
-  // ink A の密度を、もう片方 (dB, sB) を固定して閉形式で更新する。
-  const coord = (
-    sA: [number, number, number],
-    sB: [number, number, number],
-    dB: number,
-    T: [number, number, number]
-  ): number => {
-    let BB = 0, Be0 = 0, yB = 0, ye0 = 0;
-    for (let c = 0; c < 3; c++) {
-      const Rc = 1 - o * dB * sB[c];
-      const U = 1 - o * dB;
-      const Ac = Rc + (P[c] - 1) * U;
-      const Bc = -o * (sA[c] * Rc + (P[c] - 1) * U);
-      const e0 = Ac - T[c];
-      BB += Bc * Bc; Be0 += Bc * e0; yB += Y[c] * Bc; ye0 += Y[c] * e0;
-    }
-    const denom = BB + LAMBDA * yB * yB;
-    if (denom <= 1e-9) return 0;
-    const d = -(Be0 + LAMBDA * yB * ye0) / denom;
-    return d < 0 ? 0 : d > 1 ? 1 : d;
-  };
-
-  const map0 = densityMaps[i0];
-  const map1 = densityMaps[i1];
   const data = source.data;
   const pixelCount = source.width * source.height;
   const T: [number, number, number] = [0, 0, 0];
+  const R: [number, number, number] = [1, 1, 1];
+  const d = new Float64Array(m);
   for (let p = 0; p < pixelCount; p++) {
     const off = p * 4;
     const alpha = data[off + 3] / 255;
-    if (alpha < 0.01) { map0[p] = 0; map1[p] = 0; continue; }
-    // 順モデルと整合する目標色: T = (1−α)·紙 + α·元色
-    T[0] = (1 - alpha) * P[0] + (alpha * data[off]) / 255;
-    T[1] = (1 - alpha) * P[1] + (alpha * data[off + 1]) / 255;
-    T[2] = (1 - alpha) * P[2] + (alpha * data[off + 2]) / 255;
-    // NNLS 結果を初期値に座標降下（各座標は閉形式・6 スイープ）
-    let d0 = map0[p];
-    let d1 = map1[p];
-    for (let sweep = 0; sweep < 6; sweep++) {
-      d0 = coord(s0, s1, d1, T);
-      d1 = coord(s1, s0, d0, T);
+    if (alpha < 0.01) {
+      for (let t = 0; t < m; t++) maps[t][p] = 0;
+      continue;
     }
-    map0[p] = d0;
-    map1[p] = d1;
+    // 順モデルと整合する目標色: T = (1−α)·紙 + α·元色（黒点補償後）
+    for (let c = 0; c < 3; c++) {
+      const v = data[off + c] / 255;
+      T[c] = (1 - alpha) * P[c] + alpha * (bpc ? k + v * (P[c] - k) : v);
+    }
+    for (let t = 0; t < m; t++) d[t] = maps[t][p];
+    for (let sweep = 0; sweep < FIT_SWEEPS; sweep++) {
+      for (let i = 0; i < m; i++) {
+        // ink i 以外を固定すると F はアフィン: F_c = A_c + d_i·B_c
+        R[0] = 1; R[1] = 1; R[2] = 1;
+        let U = 1;
+        for (let j = 0; j < m; j++) {
+          if (j === i) continue;
+          const a = o * d[j];
+          U *= 1 - a;
+          R[0] *= 1 - a * s[j][0];
+          R[1] *= 1 - a * s[j][1];
+          R[2] *= 1 - a * s[j][2];
+        }
+        let BB = 0, Be0 = 0, yB = 0, ye0 = 0;
+        for (let c = 0; c < 3; c++) {
+          const Ac = R[c] + (P[c] - 1) * U;
+          const Bc = -o * (s[i][c] * R[c] + (P[c] - 1) * U);
+          const e0 = Ac - T[c];
+          BB += Bc * Bc; Be0 += Bc * e0; yB += Y[c] * Bc; ye0 += Y[c] * e0;
+        }
+        const denom = BB + LAMBDA * yB * yB;
+        const best = denom <= 1e-9 ? 0 : -(Be0 + LAMBDA * yB * ye0) / denom;
+        const next = d[i] + FIT_OMEGA * (best - d[i]);
+        d[i] = next < 0 ? 0 : next > 1 ? 1 : next;
+      }
+    }
+    for (let t = 0; t < m; t++) maps[t][p] = d[t];
   }
 }
 
@@ -846,12 +909,12 @@ export function computeStencil(
   }
 
   const pixelCount = width * height;
-  // 2色 Natural は乗算モデルへ直接フィットするので snap を通らない（＝残差を使わない）。
+  // 多色は乗算モデルへ直接フィットするので、separation=0 では snap を通らない（＝残差を使わない）。
+  // 黒生成（GCR）の構成だけは従来どおり NNLS + snap を土台にする。
   // 残差は上限なし NNLS を別途 8 回まわして求めるので、要るときだけ計算する。
-  const useTwoInkFit = inkRgbs.length === 2 && decompIndexMap.length === 2;
-  // 残差は snap でしか使わない。2色は separation>0 のときだけ snap を通す。
+  const useForwardFit = decompIndexMap.length >= 2 && !useGCR;
   const needResidual =
-    decompIndexMap.length >= 2 && (!useTwoInkFit || separation > 0);
+    decompIndexMap.length >= 2 && (!useForwardFit || separation > 0);
   const decomp = decompInks.length > 0
     ? decomposeColors(source, decompInks, WHITE, needResidual)
     : { maps: [] as Float32Array[], residuals: new Float32Array(pixelCount) };
@@ -880,16 +943,20 @@ export function computeStencil(
 
   // 色分解の後処理。separation（0–1）1 本で「忠実 ⇄ グラフィック」を連続に変える。
   //
-  // 2色: 乗算モデルへの直接フィットを土台にし、separation の分だけ単色へ寄せる
-  //   （separation=0 なら snap を通さず、フィットそのまま＝最も忠実）。
-  // 3色以上: 従来どおり snap が土台。ガモット外の濁りは separation=0 でも除去し
+  // 多色: 黒点補償した目標へ乗算モデルで直接フィットし、separation の分だけ単色へ寄せる
+  //   （separation=0 なら snap を通さず、フィットそのまま＝最も忠実）。3色以上の snap の
+  //   強さは従来どおり 1.5 倍まで振るので、separation=1 の見た目は従来の Bold と同じ。
+  // GCR: 従来どおり snap が土台。ガモット外の濁りは separation=0 でも除去し
   //   （scale 0.85 の下駄）、separation を上げるほど積極的に単色化する。
-  if (useTwoInkFit) {
-    applyTwoInkNaturalFit(densityMaps, decompIndexMap, source, paper, inkRgbs, inkOpacity);
+  if (useForwardFit) {
+    const blackPoint = forwardBlackPoint(decompInks, paper, inkOpacity);
+    applyForwardModelFit(
+      densityMaps, decompIndexMap, source, paper, inkRgbs, inkOpacity, blackPoint
+    );
     if (separation > 0) {
       applySnapSeparation(
         densityMaps, decompIndexMap, residuals, source, paper, inkRgbs, inkOpacity,
-        separation, separation
+        decompIndexMap.length === 2 ? separation : separation * 1.5, separation, blackPoint
       );
     }
   } else if (decompIndexMap.length >= 2) {
