@@ -43,7 +43,40 @@ const PRESETS: Record<string, { name: string; color: string }[]> = {
     { name: "Fl. Pink", color: "#F0409A" },
     { name: "Mid Blue", color: "#3255A4" },
   ],
+  "warm-trio": [
+    { name: "Green", color: "#4BA663" },
+    { name: "Pink", color: "#EB57AD" },
+    { name: "Orange", color: "#ED7542" },
+  ],
 };
+
+// 色相 × 明度のスイープ（下 1/5 はグレーランプ）。sample.jpg は無彩色なので、
+// 有彩色の分解パス（フィット・snap）のパリティはこちらで見る。
+function sweepImage(w: number): ImageData {
+  const h = Math.round(w * 0.6);
+  const img = new ImageData(w, h);
+  const grayFrom = Math.round(h * 0.8);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let rgb: number[];
+      if (y >= grayFrom) {
+        const v = Math.round((x / (w - 1)) * 255);
+        rgb = [v, v, v];
+      } else {
+        const hue = (x / w) * 360;
+        const l = 0.95 - (y / grayFrom) * 0.9;
+        const a = 0.85 * Math.min(l, 1 - l);
+        const f = (n: number) => {
+          const k = (n + hue / 30) % 12;
+          return Math.round((l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1))) * 255);
+        };
+        rgb = [f(0), f(8), f(4)];
+      }
+      img.data.set([rgb[0], rgb[1], rgb[2], 255], (y * w + x) * 4);
+    }
+  }
+  return img;
+}
 
 const $ = (id: string) => document.getElementById(id)!;
 const statusEl = $("status");
@@ -103,13 +136,14 @@ function diffMetrics(a: Uint8ClampedArray, b: Uint8ClampedArray, w: number, h: n
   return { maxD, mean: sum / n, pctOver2: (100 * over2 / n), pctOver8: (100 * over8 / n) };
 }
 
-let loadedSize = 0;
+let loadedKey = "";
 async function run() {
   const size = parseInt(($("size") as HTMLSelectElement).value, 10);
-  if (!sourceData || loadedSize !== size) {
-    log(`loading /sample.jpg at ${size}px…`);
-    sourceData = await loadImage(size);
-    loadedSize = size;
+  const src = ($("src") as HTMLSelectElement).value;
+  if (!sourceData || loadedKey !== `${src}:${size}`) {
+    log(`loading ${src} at ${size}px…`);
+    sourceData = src === "sweep" ? sweepImage(size) : await loadImage(size);
+    loadedKey = `${src}:${size}`;
   }
   const { width: w, height: h } = sourceData;
   const preset = ($("preset") as HTMLSelectElement).value;
@@ -215,7 +249,7 @@ async function run() {
     log("requesting WebGPU device…");
     await initGPU();
     ($("run") as HTMLButtonElement).onclick = run;
-    for (const id of ["preset", "mode", "dot", "fx", "size", "paper", "sep", "cutoff", "curve", "skipcpu", "gpudecomp"]) {
+    for (const id of ["preset", "src", "mode", "dot", "fx", "size", "paper", "sep", "cutoff", "curve", "skipcpu", "gpudecomp"]) {
       ($(id) as HTMLElement).onchange = run;
     }
     await run();

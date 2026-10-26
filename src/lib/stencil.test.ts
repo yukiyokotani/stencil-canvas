@@ -5,6 +5,7 @@ import { rgbToLab, hexToRgb, luminance } from "./color";
 import {
   buildLightnessTable,
   coverageForLightness,
+  forwardBlackPoint,
   highlightRolloff,
   computeInkDensities,
   type ImageDataLike,
@@ -38,6 +39,33 @@ function options(overrides: Partial<StencilOptions> = {}): StencilOptions {
     paperTextureAmount: 0,
     ...overrides,
   };
+}
+
+const WARM_TRIO = [
+  { name: "Green", color: "#4BA663" },
+  { name: "Pink", color: "#EB57AD" },
+  { name: "Orange", color: "#ED7542" },
+];
+const TRICOLOR = [
+  { name: "Blue", color: "#0078BF" },
+  { name: "Bright Red", color: "#E93A28" },
+  { name: "Yellow", color: "#FFE800" },
+];
+
+/** 色相を 1° 刻みで一周する 360x1 の入力（彩度・明度は一定） */
+function hueRamp(): ImageDataLike {
+  const data = new Uint8ClampedArray(360 * 4);
+  const s = 0.8;
+  const l = 0.55;
+  const a = s * Math.min(l, 1 - l);
+  for (let h = 0; h < 360; h++) {
+    const f = (n: number) => {
+      const k = (n + h / 30) % 12;
+      return Math.round((l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1))) * 255);
+    };
+    data.set([f(0), f(8), f(4), 255], h * 4);
+  }
+  return { data, width: 360, height: 1 };
 }
 
 /** 3x1 の固定入力（暖色の肌 / 中間グレー / ほぼ黒） */
@@ -153,6 +181,20 @@ describe("coverageForLightness", () => {
   });
 });
 
+describe("forwardBlackPoint", () => {
+  it("白っぽい紙では、全インクの重ねと同じ輝度の紙より暗いグレーを返す", () => {
+    const k = forwardBlackPoint(WARM_TRIO.map((c) => hexToRgb(c.color)), CREAM, 0.85);
+    expect(k).not.toBeNull();
+    expect(k!).toBeGreaterThan(0);
+    expect(k!).toBeLessThan(232 / 255);
+  });
+
+  it("暗い紙に明るいインク（重ねても紙より暗くならない）では補償しない", () => {
+    const inks = [{ r: 255, g: 232, b: 0 }, { r: 240, g: 240, b: 240 }];
+    expect(forwardBlackPoint(inks, BLACK_PAPER, 0.85)).toBeNull();
+  });
+});
+
 describe("computeInkDensities", () => {
   it("2色 Natural は暗部で両インクを使い、密度は 0..1 に収まる", () => {
     const { densityMaps, inkRgbs } = computeInkDensities(fixture(), options());
@@ -167,6 +209,43 @@ describe("computeInkDensities", () => {
     // 3 画素目（ほぼ黒）は 2 色の重ねで作る
     expect(densityMaps[0][2]).toBeGreaterThan(0.5);
     expect(densityMaps[1][2]).toBeGreaterThan(0.5);
+  });
+
+  it("3色 Natural も黒を全インクの重ねで作る（1 色だけ薄い暗部にならない）", () => {
+    const { densityMaps } = computeInkDensities(
+      fixture(),
+      options({ colors: WARM_TRIO })
+    );
+    for (const map of densityMaps) {
+      expect(map[2]).toBeGreaterThan(0.3);
+    }
+  });
+
+  it("全インクの重ねより暗い色も潰さず、暗さの順に階調が残る（黒点補償）", () => {
+    // 黒 / 濃いグレー / 中間グレー
+    const wedge: ImageDataLike = {
+      data: new Uint8ClampedArray([0, 0, 0, 255, 30, 30, 30, 255, 70, 70, 70, 255]),
+      width: 3,
+      height: 1,
+    };
+    for (const colors of [options().colors, WARM_TRIO]) {
+      const { densityMaps } = computeInkDensities(wedge, options({ colors }));
+      const total = (p: number) => densityMaps.reduce((sum, map) => sum + map[p], 0);
+      expect(total(0) - total(1)).toBeGreaterThan(0.1);
+      expect(total(1) - total(2)).toBeGreaterThan(0.1);
+    }
+  });
+
+  it("3色でも色相の連続した変化で密度が跳ばない（ハードな色境界が出ない）", () => {
+    const ramp = hueRamp();
+    for (const colors of [WARM_TRIO, TRICOLOR]) {
+      const { densityMaps } = computeInkDensities(ramp, options({ colors }));
+      for (const map of densityMaps) {
+        for (let i = 1; i < map.length; i++) {
+          expect(Math.abs(map[i] - map[i - 1])).toBeLessThan(0.15);
+        }
+      }
+    }
   });
 
   it("単色はインク色によらず輝度のモノクローム（暗いほど濃い）", () => {
